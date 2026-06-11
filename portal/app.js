@@ -418,9 +418,10 @@ if (typeof document !== 'undefined') {
     });
     Plotly.newPlot('wykres-zbiorczy', slady, {
       title: 'Krzywe naprężenie–odkształcenie',
-      xaxis: { title: 'Odkształcenie / Strain [%]', rangemode: 'tozero' },
+      xaxis: { title: { text: 'Odkształcenie / Strain [%]', standoff: 8 }, rangemode: 'tozero' },
       yaxis: { title: 'Naprężenie / Stress [MPa]' },
-      legend: { orientation: 'h' }, margin: { t: 50 },
+      legend: { orientation: 'h', yanchor: 'top', y: -0.22 },
+      margin: { t: 50, b: 95 },
     }, { responsive: true, displaylogo: false });
 
     // pętle histerezy — małe wykresy w siatce
@@ -485,20 +486,23 @@ if (typeof document !== 'undefined') {
       slady.push({ x: xFit, y: yFit, name: 'dopasowanie', mode: 'lines', line: { color: kolory[0], dash: 'dash', width: 1 }, xaxis: 'x', yaxis: 'y' });
       slady.push({ x: [xs[0], xs[xs.length - 1]], y: [fit.winf, fit.winf], name: 'W∞', mode: 'lines', line: { color: '#555', dash: 'dot', width: 1 }, xaxis: 'x', yaxis: 'y' });
     }
+    // bez podpisu „cykl" pod osiami — etykiety preload/1/2/… mówią same za siebie,
+    // a podpisy osi kolidowały z legendą i tytułami dolnego wiersza siatki
     const tickvals = xs, ticktext = nazwy.map(n => n.replace('cykl ', ''));
     const osie = {};
     for (let k = 1; k <= 4; k++) {
-      osie['xaxis' + (k > 1 ? k : '')] = { tickvals, ticktext, title: 'cykl' };
+      osie['xaxis' + (k > 1 ? k : '')] = { tickvals, ticktext };
     }
     const tytuly = ['Pole histerezy σ⁺ [kJ/m³]', 'Moduły sieczne [MPa]', 'σ przy zadanym ε [MPa]', 'Permanent set [p.p.]'];
     Plotly.newPlot('wykres-trendy', slady, {
-      grid: { rows: 2, columns: 2, pattern: 'independent' },
+      grid: { rows: 2, columns: 2, pattern: 'independent', ygap: 0.22 },
       title: 'Ewolucja parametrów z numerem cyklu' + (preload ? ' (pusty znacznik = preload)' : ''),
-      height: 620, margin: { t: 70 }, legend: { orientation: 'h' },
+      height: 640, margin: { t: 70, b: 80 },
+      legend: { orientation: 'h', yanchor: 'top', y: -0.07 },
       ...osie,
       annotations: tytuly.map((t, k) => ({
         text: t, xref: 'x' + (k > 0 ? k + 1 : '') + ' domain', yref: 'y' + (k > 0 ? k + 1 : '') + ' domain',
-        x: 0.5, y: 1.12, showarrow: false, font: { size: 13 },
+        x: 0.5, y: 1.14, showarrow: false, font: { size: 13 },
       })),
     }, { responsive: true, displaylogo: false });
   }
