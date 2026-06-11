@@ -25,6 +25,9 @@
   #lista-plikow { margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; color: #5b6478; }
   #lista-plikow li::before { content: "📄 "; }
   #blad { color: #b91c1c; margin-top: 12px; white-space: pre-wrap; }
+  #ostrzezenia { display: none; background: #fef9e7; border: 1px solid #f3d77f; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 13.5px; color: #7a5d00; }
+  #ostrzezenia ul { margin: 6px 0 0; padding-left: 20px; }
+  #stabilizacja { background: #eef3ff; border-radius: 8px; padding: 10px 14px; font-size: 13.5px; margin-top: 12px; }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
   th, td { border: 1px solid var(--ramka); padding: 7px 10px; text-align: right; }
   th { background: #f0f3fa; }
@@ -62,15 +65,24 @@
   </div>
 
   <div id="wyniki">
+    <div id="ostrzezenia"></div>
     <div class="karta">
       <div class="pasek-wynikow">
-        <h2 style="margin:0;font-size:17px">Wyniki — pola histerezy</h2>
-        <a class="pobierz" id="pobierz-csv" download="wyniki_histereza.csv" href="#">⬇ pobierz tabelę (CSV)</a>
+        <h2 style="margin:0;font-size:17px">Energia — histereza, adhezja, dyssypacja</h2>
+        <a class="pobierz" id="pobierz-csv" download="wyniki_histereza.csv" href="#">⬇ pobierz wszystkie wyniki (CSV)</a>
       </div>
       <div style="overflow-x:auto"><table id="tabela"></table></div>
+      <div id="stabilizacja"></div>
       <p id="podsumowanie" style="color:#5b6478;font-size:13.5px"></p>
     </div>
+    <div class="karta">
+      <h2 style="margin:0 0 10px;font-size:17px">Sztywność, zmiękczenie i odkształcenie trwałe</h2>
+      <div style="overflow-x:auto"><table id="tabela-mech"></table></div>
+      <p style="color:#5b6478;font-size:13px">Moduły sieczne i σ przy zadanych ε liczone na wygładzonej gałęzi obciążania.
+      ε kontaktu = odkształcenie, przy którym naprężenie zaczyna realnie rosnąć; jego przyrost względem pierwszego ściśnięcia (permanent set) to miara trwałej deformacji próbki.</p>
+    </div>
     <div class="karta"><div id="wykres-zbiorczy" class="wykres"></div></div>
+    <div class="karta"><div id="wykres-trendy" class="wykres"></div></div>
     <div class="karta"><div id="wykres-petle" class="wykres"></div></div>
   </div>
 </main>
