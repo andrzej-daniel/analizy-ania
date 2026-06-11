@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analiza cyklicznego ściskania</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root { --akcent: #2563eb; --tlo: #f6f7fb; --ramka: #e3e6ee; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--tlo); color: #1c2333; }
+  header { background: #fff; border-bottom: 1px solid var(--ramka); padding: 18px 28px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: #5b6478; font-size: 14px; }
+  main { max-width: 1100px; margin: 24px auto; padding: 0 20px 60px; }
+  .karta { background: #fff; border: 1px solid var(--ramka); border-radius: 10px; padding: 20px 24px; margin-bottom: 20px; }
+  #dropzone { border: 2px dashed #b9c2d8; border-radius: 10px; padding: 36px 20px; text-align: center; color: #5b6478; cursor: pointer; transition: 0.15s; }
+  #dropzone.aktywny, #dropzone:hover { border-color: var(--akcent); background: #eef3ff; }
+  #dropzone strong { color: var(--akcent); }
+  .opcje { display: flex; flex-wrap: wrap; gap: 24px; align-items: center; margin-top: 16px; font-size: 14px; }
+  .opcje label { display: flex; align-items: center; gap: 7px; }
+  .opcje input[type="number"] { width: 110px; padding: 5px 8px; border: 1px solid var(--ramka); border-radius: 6px; }
+  button.glowny { background: var(--akcent); color: #fff; border: 0; border-radius: 8px; padding: 10px 22px; font-size: 15px; cursor: pointer; margin-top: 16px; }
+  button.glowny:disabled { background: #aab6d4; cursor: not-allowed; }
+  #lista-plikow { margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; color: #5b6478; }
+  #lista-plikow li::before { content: "📄 "; }
+  #blad { color: #b91c1c; margin-top: 12px; white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--ramka); padding: 7px 10px; text-align: right; }
+  th { background: #f0f3fa; }
+  td:first-child, th:first-child { text-align: left; }
+  tr.preload td { color: #8a93a8; font-style: italic; }
+  .wykres { width: 100%; min-height: 480px; }
+  #wyniki { display: none; }
+  .pasek-wynikow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  a.pobierz { font-size: 14px; color: var(--akcent); }
+  footer { text-align: center; color: #9aa3b8; font-size: 12.5px; padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Analiza cyklicznego ściskania</h1>
+  <p>Wgraj pliki CSV z maszyny wytrzymałościowej (Czas, Siła, Przemieszczenie, Naprężenie, Rozstaw) — krzywe σ–ε i pola histerezy policzą się w przeglądarce, dane nigdzie nie są wysyłane.</p>
+</header>
+<main>
+  <div class="karta">
+    <div id="dropzone">
+      <strong>Kliknij</strong> albo przeciągnij tutaj pliki CSV<br>
+      <small>(można wgrać kilka części jednego pomiaru naraz, np. „820 dz-1/2/3.csv")</small>
+      <input type="file" id="pliki" accept=".csv,text/csv" multiple hidden>
+    </div>
+    <ul id="lista-plikow"></ul>
+    <div class="opcje">
+      <label>h₀ — wysokość próbki [mm]:
+        <input type="number" id="h0" step="0.0001" min="0" placeholder="auto (rozstaw)">
+      </label>
+      <label><input type="checkbox" id="preload" checked>
+        pierwsze ściśnięcie to preload (kondycjonowanie)</label>
+    </div>
+    <button class="glowny" id="analizuj" disabled>Analizuj</button>
+    <div id="blad"></div>
+  </div>
+
+  <div id="wyniki">
+    <div class="karta">
+      <div class="pasek-wynikow">
+        <h2 style="margin:0;font-size:17px">Wyniki — pola histerezy</h2>
+        <a class="pobierz" id="pobierz-csv" download="wyniki_histereza.csv" href="#">⬇ pobierz tabelę (CSV)</a>
+      </div>
+      <div style="overflow-x:auto"><table id="tabela"></table></div>
+      <p id="podsumowanie" style="color:#5b6478;font-size:13.5px"></p>
+    </div>
+    <div class="karta"><div id="wykres-zbiorczy" class="wykres"></div></div>
+    <div class="karta"><div id="wykres-petle" class="wykres"></div></div>
+  </div>
+</main>
+<footer>analizy-ania · obliczenia: całka trapezów ∮σ dε po pętli obciążenie–odciążenie</footer>
+<script src="app.js"></script>
+</body>
+</html>
