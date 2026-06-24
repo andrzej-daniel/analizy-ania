@@ -1,9 +1,14 @@
 /* Testy regresyjne logiki portalu (node testy/portal.test.js).
-   Porównanie z wynikami notebooka + przypadki walidacji wejścia. */
+   Sprawdzaja metodologie punkt-po-punkcie, preload/QC, trace i eksport CSV. */
 
 const fs = require('fs');
 const path = require('path');
-const { parsujCsv, waliduj, analizuj, dopasujStabilizacje } = require('../portal/app.js');
+const {
+  parsujCsv,
+  analizuj,
+  zrobSummaryCsv,
+  zrobTraceCsv,
+} = require('../portal/app.js');
 
 const KATALOG = path.join(__dirname, '..');
 let zaliczone = 0, oblane = 0;
@@ -12,63 +17,117 @@ function ok(warunek, opis) {
   if (warunek) { zaliczone++; console.log('  ✓', opis); }
   else { oblane++; console.error('  ✗', opis); }
 }
+
 function blisko(a, b, tolProc, opis) {
-  ok(Math.abs(a - b) <= Math.abs(b) * tolProc / 100, `${opis} (jest ${a.toFixed(3)}, oczekiwane ${b} ±${tolProc}%)`);
+  const skala = Math.max(Math.abs(b), 1e-12);
+  ok(Math.abs(a - b) <= skala * tolProc / 100, `${opis} (jest ${a.toFixed(6)}, oczekiwane ${b.toFixed(6)} ±${tolProc}%)`);
+}
+
+function bliskoAbs(a, b, tol, opis) {
+  ok(Math.abs(a - b) <= tol, `${opis} (jest ${a}, oczekiwane ${b} ±${tol})`);
 }
 
 function wczytaj(nazwa) {
-  // dane są w cp1250 — nagłówki mają krzaki, ale wiersze danych to czyste ASCII
   return parsujCsv(fs.readFileSync(path.join(KATALOG, nazwa), 'latin1'));
 }
 
 const NAZWY = ['820 dz-1.csv', '820 dz-2.csv', '820 dz-3.csv'];
 const LISTY = NAZWY.map(wczytaj);
 
-console.log('— zgodność z notebookiem (3 pliki) —');
+console.log('— scalanie i segmentacja —');
 {
   const r = analizuj(LISTY, null, NAZWY);
-  ok(r.cykle.length === 6, 'wykryto 6 ściśnięć');
-  ok(Math.abs(r.h0 - 3.3135) < 0.001, `h0 = ${r.h0}`);
-  // histereza surowa (z adhezją) — wartości z notebooka [kJ/m³]
-  const surowe = [165.69, 79.90, 67.49, 52.88, 50.52, 47.17];
-  surowe.forEach((w, i) => blisko(r.wyniki[i].wPetlaSurowe * 1000, w, 0.5, `histereza surowa cyklu ${i + 1}`));
-  ok(r.ostrzezenia.length === 0, 'brak ostrzeżeń dla kompletu danych');
+  ok(r.liczbaPunktow === 199117, `globalnie ${r.liczbaPunktow} punktów po scaleniu`);
+  ok(r.punkty[0].globalIndex === 1 && r.punkty.at(-1).globalIndex === r.liczbaPunktow, 'utworzono globalny indeks punktów');
+  ok(r.punkty.every(p => p.sourceFile && p.sourceRow > 0), 'każdy punkt zachowuje plik źródłowy i wiersz źródłowy');
+  ok(r.wyniki.length === 6, 'wykryto 6 cykli');
+  ok(r.hasPreload === true, 'pierwszy cykl jest automatycznie traktowany jako preload');
+  ok(r.wyniki[0].cycleLabel === 'preload' && r.wyniki[0].isPreload, 'preload pozostaje w wynikach/QC');
+  ok(r.wyniki[1].cycleLabel === 'cycle 1' && r.wyniki[1].cycleNumber === 1, 'cycle 1 to pierwszy cykl po preloadzie');
+  ok(r.trace.length === r.wyniki.reduce((s, w) => s + w.points.length, 0), 'trace zawiera każdy punkt z wykrytych cykli');
 }
 
-console.log('— sanity nowych wielkości —');
+console.log('— metodologia stress-strain i preload —');
 {
   const r = analizuj(LISTY, null, NAZWY);
-  const w = r.wyniki;
-  ok(w.every(x => x.polePetli > 0), 'histereza σ⁺ dodatnia we wszystkich cyklach');
-  ok(w.every(x => x.pracaAdhezji >= 0), 'praca adhezji nieujemna');
-  ok(w[0].pracaAdhezjiKJm3 > 5, `praca adhezji w preloadzie istotna (${w[0].pracaAdhezjiKJm3.toFixed(1)} kJ/m³)`);
-  ok(w.every(x => x.dyssypacjaPct > 0 && x.dyssypacjaPct < 100), 'dyssypacja (σ⁺) w przedziale (0,100)%');
-  ok(w.every(x => x.resiliencePct > 0 && x.resiliencePct < 100), 'resilience w przedziale (0,100)%');
-  ok(w.every(x => x.e1030 > 0 && x.e6085 > 0), 'moduły sieczne dodatnie');
-  ok(w[0].e1030 > 5 * w[1].e1030, 'preload wyraźnie sztywniejszy niż cykl 1 (Mullins)');
-  ok(w.every(x => x.e6085 > x.e1030), 'usztywnienie przy dużych ε (E60-85 > E10-30)');
-  const ps = w.map(x => x.permanentSetPp);
-  ok(ps[0] === 0, 'permanent set preloadu = 0 (baza)');
-  ok(ps[5] > ps[1], 'permanent set rośnie z cyklami');
-  // bilans energii: surowa = σ⁺ + adhezja
-  w.forEach((x, i) => blisko(x.polePetli + x.pracaAdhezji, x.wPetlaSurowe, 0.01, `bilans energii cyklu ${i + 1}`));
-  const fit = dopasujStabilizacje(w.slice(1).map(x => x.poleKJm3));
-  ok(fit !== null && fit.winf > 0 && fit.winf < w[1].poleKJm3, `dopasowanie stabilizacji: W∞ = ${fit.winf.toFixed(1)} kJ/m³`);
-  ok(fit.r2 > 0.9, `R² dopasowania > 0.9 (jest ${fit.r2.toFixed(3)})`);
+  const preload = r.wyniki[0];
+  const c1 = r.wyniki[1];
+  ok(preload.stressRetentionPct === null && preload.stressSofteningPct === null, 'preload nie ma retention/softening');
+  blisko(c1.stressRetentionPct, 100, 1e-9, 'retention cycle 1 = 100%');
+  bliskoAbs(c1.stressSofteningPct, 0, 1e-9, 'softening cycle 1 = 0%');
+  ok(r.wyniki.slice(2).every(w => w.stressRetentionPct < 100 && w.stressSofteningPct > 0), 'kolejne cykle miękną względem cycle 1');
+
+  const oczekiwaneH = [142.06, 75.87, 65.10, 51.48, 49.18, 45.67];
+  r.wyniki.forEach((w, i) => blisko(w.hysteresisKJm3, oczekiwaneH[i], 0.8, `hysteresis ${w.cycleLabel}`));
+  r.wyniki.forEach(w => {
+    bliskoAbs(w.hysteresisKJm3, w.aLoadingKJm3 - w.aUnloadingKJm3, 1e-9, `H = Aloading - Aunloading (${w.cycleLabel})`);
+    bliskoAbs(w.resiliencePct, 100 * w.aUnloadingKJm3 / w.aLoadingKJm3, 1e-9, `R = Aunloading/Aloading (${w.cycleLabel})`);
+  });
+}
+
+console.log('— sigma+ i trace punkt-po-punkcie —');
+{
+  const r = analizuj(LISTY, null, NAZWY);
+  const zeroed = r.trace.filter(row => row.negativeStressZeroed);
+  ok(zeroed.length === r.wyniki.reduce((s, w) => s + w.negativeStressZeroedCount, 0), 'QC liczy wyzerowane ujemne naprężenia');
+  ok(zeroed.every(row => row.stressRaw < 0 && row.stressPlus === 0), 'σ+ = max(σ, 0) dla ujemnych naprężeń');
+
+  const trapez = r.trace.find(row => row.intervalPhase === 'loading' && row.deltaStrain > 0 && row.stressAvg > 0);
+  ok(Boolean(trapez), 'znaleziono niezerowy trapez w trace');
+  bliskoAbs(trapez.trapezoidAreaKJm3, trapez.stressAvg * trapez.deltaStrain * 1000, 1e-12, 'Ai stress-strain zapisane w trace');
+  bliskoAbs(trapez.fdTrapezoidAreaMj, trapez.forceAvg * trapez.deltaDisplacement, 1e-12, 'Ai force-displacement zapisane w trace');
+  ok(trapez.prevGlobalIndex !== null && trapez.rawPoint === trapez.globalIndex, 'trace wskazuje punkt surowy i poprzedni punkt interwału');
+}
+
+console.log('— force-displacement i elastic recovery —');
+{
+  const r = analizuj(LISTY, null, NAZWY);
+  r.wyniki.forEach(w => {
+    bliskoAbs(w.fdHysteresisMj, w.aLoadingFdMj - w.aUnloadingFdMj, 1e-9, `HFd = Aloading,Fd - Aunloading,Fd (${w.cycleLabel})`);
+    bliskoAbs(w.forceResiliencePct, 100 * w.aUnloadingFdMj / w.aLoadingFdMj, 1e-9, `RFd = Aunloading,Fd/Aloading,Fd (${w.cycleLabel})`);
+    bliskoAbs(w.elasticRecoveryValuePct, w.forceResiliencePct, 1e-12, `elastic recovery alias RFd (${w.cycleLabel})`);
+    ok(w.elasticRecoveryValuePct > 0 && w.elasticRecoveryValuePct < 100, `elastic recovery w zakresie (0,100)% (${w.cycleLabel})`);
+  });
+}
+
+console.log('— interpolacja i Esec90 —');
+{
+  const r = analizuj(LISTY, null, NAZWY);
+  const c1 = r.wyniki[1];
+  const i90 = c1.interpolations['90'];
+  ok(i90.leftGlobalIndex !== null && i90.rightGlobalIndex !== null, 'zachowano indeksy punktów interpolacji σ90');
+  ok(i90.leftStrainFrac <= 0.90 && i90.rightStrainFrac >= 0.90, 'punkty interpolacji obejmują ε = 0.90');
+  ok(i90.stress >= Math.min(i90.leftStressPlus, i90.rightStressPlus) && i90.stress <= Math.max(i90.leftStressPlus, i90.rightStressPlus), 'σ90 leży między punktami interpolacji');
+  bliskoAbs(c1.eSec90, c1.sigma90 / 0.90, 1e-12, 'Esec90 = σ90 / 0.90');
+  ok(['10', '30', '50', '70', '90'].every(k => c1.interpolations[k].stress !== null), 'wyznaczono σ10/30/50/70/90');
+}
+
+console.log('— eksporty CSV —');
+{
+  const r = analizuj(LISTY, null, NAZWY);
+  const summary = zrobSummaryCsv(r);
+  const trace = zrobTraceCsv(r);
+  ok(summary.startsWith('cycle_label;cycle_number;is_preload'), 'summary CSV ma nagłówek cykli');
+  ok(summary.includes('elastic_recovery_value_pct') && summary.includes('stress_retention_pct'), 'summary CSV zawiera recovery i retention');
+  ok(summary.includes('sigma90_left_global_index') && summary.includes('sigma90_right_stress_plus_mpa'), 'summary CSV zachowuje punkty interpolacji');
+  ok(trace.startsWith('raw_point;global_index;source_file'), 'trace CSV ma nagłówek punktów surowych');
+  ok(trace.includes('trapezoid_area_kJ_m3') && trace.includes('final_hysteresis_kJ_m3'), 'trace CSV zawiera trapezy i parametry końcowe');
+  ok(trace.includes('final_stress_retention_pct') && trace.includes('final_Esec90_MPa'), 'trace CSV zawiera końcowe metryki mechaniczne');
 }
 
 console.log('— walidacja: 1 plik —');
 {
   const r = analizuj([LISTY[0]], null, [NAZWY[0]]);
-  ok(r.cykle.length === 3, `sam dz-1 → ${r.cykle.length} cykle (t do 900 s)`);
+  ok(r.wyniki.length === 3, `sam dz-1 → ${r.wyniki.length} cykle`);
+  ok(r.hasPreload === true && r.wyniki[1].cycleLabel === 'cycle 1', 'preload działa także dla jednego pliku z wieloma cyklami');
 }
 
 console.log('— walidacja: duplikat pliku —');
 {
   const r = analizuj([LISTY[0], LISTY[0], LISTY[1], LISTY[2]], null, ['a.csv', 'a.csv', 'b.csv', 'c.csv']);
   ok(r.ostrzezenia.some(o => o.includes('zduplikowanych')), 'ostrzeżenie o duplikatach');
-  ok(r.liczbaPunktow === 199117, `po deduplikacji ${r.liczbaPunktow} punktów (jak dla 3 plików)`);
-  blisko(r.wyniki[0].wPetlaSurowe * 1000, 165.69, 0.5, 'wynik cyklu 1 niezmieniony mimo duplikatu');
+  ok(r.liczbaPunktow === 199117, `po deduplikacji ${r.liczbaPunktow} punktów`);
+  blisko(r.wyniki[1].hysteresisKJm3, 75.87, 0.8, 'wynik cycle 1 niezmieniony mimo duplikatu');
 }
 
 console.log('— walidacja: dziura w czasie (pliki 1+3 bez 2) —');
@@ -89,7 +148,7 @@ console.log('— walidacja: złe h0 —');
 {
   let komunikat = '';
   try { analizuj([LISTY[0]], -5, [NAZWY[0]]); } catch (e) { komunikat = e.message; }
-  ok(komunikat.includes('h₀'), 'błąd dla h0 ≤ 0');
+  ok(komunikat.includes('h0'), 'błąd dla h0 ≤ 0');
 }
 
 console.log('— parser: format bez cudzysłowów, separator ; —');

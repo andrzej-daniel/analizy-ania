@@ -6,7 +6,7 @@
 <title>Analiza cyklicznego ściskania</title>
 <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
 <style>
-  :root { --akcent: #2563eb; --tlo: #f6f7fb; --ramka: #e3e6ee; }
+  :root { --akcent: #2563eb; --tlo: #f6f7fb; --ramka: #e3e6ee; --info: #eef6ff; --info-ramka: #b8d7ff; }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--tlo); color: #1c2333; }
   header { background: #fff; border-bottom: 1px solid var(--ramka); padding: 18px 28px; }
@@ -28,6 +28,9 @@
   #ostrzezenia { display: none; background: #fef9e7; border: 1px solid #f3d77f; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 13.5px; color: #7a5d00; }
   #ostrzezenia ul { margin: 6px 0 0; padding-left: 20px; }
   #stabilizacja { background: #eef3ff; border-radius: 8px; padding: 10px 14px; font-size: 13.5px; margin-top: 12px; }
+  .info { background: var(--info); border: 1px solid var(--info-ramka); border-radius: 8px; padding: 10px 14px; margin: 10px 0 14px; color: #26415f; font-size: 13.5px; line-height: 1.45; }
+  .info strong { color: #12375c; }
+  .formula { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: normal; }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
   th, td { border: 1px solid var(--ramka); padding: 7px 10px; text-align: right; }
   th { background: #f0f3fa; }
@@ -57,8 +60,6 @@
       <label>h₀ — wysokość próbki [mm]:
         <input type="number" id="h0" step="0.0001" min="0" placeholder="auto (rozstaw)">
       </label>
-      <label><input type="checkbox" id="preload" checked>
-        pierwsze ściśnięcie to preload (kondycjonowanie)</label>
     </div>
     <button class="glowny" id="analizuj" disabled>Analizuj</button>
     <div id="blad"></div>
@@ -68,25 +69,81 @@
     <div id="ostrzezenia"></div>
     <div class="karta">
       <div class="pasek-wynikow">
-        <h2 style="margin:0;font-size:17px">Energia — histereza, adhezja, dyssypacja</h2>
-        <a class="pobierz" id="pobierz-csv" download="wyniki_histereza.csv" href="#">⬇ pobierz wszystkie wyniki (CSV)</a>
+        <h2 style="margin:0;font-size:17px">Energia i odzysk mechaniczny</h2>
+        <span>
+          <a class="pobierz" id="pobierz-summary" download="wyniki_summary.csv" href="#">pobierz summary CSV</a>
+          ·
+          <a class="pobierz" id="pobierz-trace" download="trace_punkt_po_punkcie.csv" href="#">pobierz trace CSV</a>
+        </span>
+      </div>
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        każdy cykl jest liczony z surowych punktów. Ujemne naprężenia z odrywania głowicy są zerowane:
+        <span class="formula">σ+ = max(σ, 0)</span>.
+        Pole stress-strain dla interwału:
+        <span class="formula">Ai = ((σ+i + σ+i-1) / 2) × |εi - εi-1| × 1000</span> [kJ/m3].
+        Następnie:
+        <span class="formula">H = Aloading - Aunloading</span>,
+        <span class="formula">R = (Aunloading / Aloading) × 100</span>.
+        Dla force-displacement:
+        <span class="formula">Ai,Fd = ((F+i + F+i-1) / 2) × |di - di-1|</span> [mJ],
+        <span class="formula">HFd = Aloading,Fd - Aunloading,Fd</span>,
+        <span class="formula">elastic recovery = RFd = (Aunloading,Fd / Aloading,Fd) × 100</span>.
       </div>
       <div style="overflow-x:auto"><table id="tabela"></table></div>
       <div id="stabilizacja"></div>
       <p id="podsumowanie" style="color:#5b6478;font-size:13.5px"></p>
     </div>
     <div class="karta">
-      <h2 style="margin:0 0 10px;font-size:17px">Sztywność, zmiękczenie i odkształcenie trwałe</h2>
+      <h2 style="margin:0 0 10px;font-size:17px">Sztywność, retention i softening</h2>
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        odkształcenie do obliczeń jest ułamkiem:
+        <span class="formula">ε = displacement / h0</span>.
+        Naprężenia przy
+        <span class="formula">ε = 0.10, 0.30, 0.50, 0.70, 0.90</span>
+        są wyznaczane interpolacją liniową na gałęzi loading. Moduł sieczny:
+        <span class="formula">Esec90 = σ90% / 0.90</span>.
+        Retention i softening są liczone względem cycle 1, czyli pierwszego cyklu po preloadzie:
+        <span class="formula">Retentionn = (σmax,n / σmax,cycle1) × 100</span>,
+        <span class="formula">Softeningn = 100 - Retentionn</span>.
+      </div>
       <div style="overflow-x:auto"><table id="tabela-mech"></table></div>
-      <p style="color:#5b6478;font-size:13px">Moduły sieczne i σ przy zadanych ε liczone na wygładzonej gałęzi obciążania.
-      ε kontaktu = odkształcenie, przy którym naprężenie zaczyna realnie rosnąć; jego przyrost względem pierwszego ściśnięcia (permanent set) to miara trwałej deformacji próbki.</p>
     </div>
-    <div class="karta"><div id="wykres-zbiorczy" class="wykres"></div></div>
-    <div class="karta"><div id="wykres-trendy" class="wykres"></div></div>
-    <div class="karta"><div id="wykres-petle" class="wykres"></div></div>
+    <div class="karta">
+      <h2 style="margin:0 0 10px;font-size:17px">QC cykli</h2>
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        preload jest zachowany jako cykl kondycjonujący i kontrola jakości, ale nie jest punktem odniesienia
+        dla retention/softening i nie jest pokazywany na głównych wykresach publikacyjnych. QC sprawdza:
+        maksymalny strain, maksymalny stress+, liczby punktów loading/unloading, liczbę punktów z
+        <span class="formula">σ &lt; 0</span> wyzerowanych do <span class="formula">σ+ = 0</span> oraz kompletność cyklu.
+      </div>
+      <div style="overflow-x:auto"><table id="tabela-qc"></table></div>
+    </div>
+    <div class="karta">
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        wykres pokazuje tylko cykle publikacyjne 1-5, bez preloadu:
+        <span class="formula">x = strain_% = 100 × displacement / h0</span>,
+        <span class="formula">y = stress+ [MPa]</span>.
+      </div>
+      <div id="wykres-zbiorczy" class="wykres"></div>
+    </div>
+    <div class="karta">
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        wykres force-displacement pokazuje tylko cykle publikacyjne 1-5, bez preloadu.
+        Do pola pracy używane jest <span class="formula">F+ = max(F, 0)</span>,
+        więc ujemne wartości od adhezji nie zawyżają odzysku energii.
+      </div>
+      <div id="wykres-force" class="wykres"></div>
+    </div>
+    <div class="karta">
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        trendy pokazują parametry końcowe per cycle 1..n bez preloadu: hysteresis, resilience,
+        retention, softening, Esec90, HFd, elastic recovery i max force.
+      </div>
+      <div id="wykres-trendy" class="wykres"></div>
+    </div>
   </div>
 </main>
-<footer>analizy-ania · obliczenia: całka trapezów ∮σ dε po pętli obciążenie–odciążenie</footer>
+<footer>analizy-ania · transparentna analiza punkt-po-punkcie z trace CSV</footer>
 <script src="app.js"></script>
 </body>
 </html>

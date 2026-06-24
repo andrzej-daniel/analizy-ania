@@ -19,13 +19,23 @@ CSV_FILES = [
 ]
 
 PLOTLY_STUB = """
+window.__plots = {};
 window.Plotly = {
   newPlot: async (target, data, layout) => {
     const element = typeof target === 'string' ? document.getElementById(target) : target;
     if (element) {
-      element.dataset.plotlyRendered = 'true';
-      element.dataset.traceCount = String(Array.isArray(data) ? data.length : 0);
+      const xTitle = layout?.xaxis?.title?.text || layout?.xaxis?.title || '';
+      const yTitle = layout?.yaxis?.title?.text || layout?.yaxis?.title || '';
       const title = typeof layout?.title === 'string' ? layout.title : layout?.title?.text || '';
+      window.__plots[element.id] = {
+        title,
+        xTitle,
+        yTitle,
+        traceCount: Array.isArray(data) ? data.length : 0,
+        traceNames: Array.isArray(data) ? data.map(trace => trace.name) : []
+      };
+      element.dataset.plotlyRendered = 'true';
+      element.dataset.traceCount = String(window.__plots[element.id].traceCount);
       element.textContent = title;
     }
     return { data, layout };
@@ -77,7 +87,17 @@ def page(portal_url: str) -> Iterator[Page]:
             browser.close()
 
 
-def test_portal_analyzes_uploaded_csv_files(page: Page) -> None:
+def read_blob_text(page: Page, selector: str) -> str:
+    return page.evaluate(
+        """async (selector) => {
+            const href = document.querySelector(selector).href;
+            return await (await fetch(href)).text();
+        }""",
+        selector,
+    )
+
+
+def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page) -> None:
     expect(page.get_by_role("heading", name="Analiza cyklicznego ściskania")).to_be_visible()
     expect(page.locator("#analizuj")).to_be_disabled()
 
@@ -89,18 +109,45 @@ def test_portal_analyzes_uploaded_csv_files(page: Page) -> None:
 
     expect(page.locator("#wyniki")).to_be_visible(timeout=20_000)
     expect(page.locator("#blad")).to_be_empty()
-    expect(page.locator("#podsumowanie")).to_contain_text("wykryto ściśnięć: 6")
+    expect(page.locator("#podsumowanie")).to_contain_text("wykryto cykli: 6")
+    expect(page.locator("#podsumowanie")).to_contain_text("pierwszy cykl traktowany jako preload/QC")
+
     expect(page.locator("#tabela tr")).to_have_count(7)
     expect(page.locator("#tabela-mech tr")).to_have_count(7)
-    expect(page.locator("#tabela")).to_contain_text("preload")
-    expect(page.locator("#stabilizacja")).to_contain_text("W∞")
+    expect(page.locator("#tabela-qc tr")).to_have_count(7)
+    expect(page.locator("#tabela")).to_contain_text("preconditioning/QC")
+    expect(page.locator("#tabela")).to_contain_text("elastic recovery")
+    expect(page.locator("#tabela-mech")).to_contain_text("stress retention")
+    expect(page.locator("#tabela-mech")).to_contain_text("Esec90")
+    expect(page.locator("#tabela-qc")).to_contain_text("zeroed negative stress")
 
-    download_href = page.locator("#pobierz-csv").get_attribute("href")
-    assert download_href is not None
-    assert download_href.startswith("blob:")
+    expect(page.locator(".info")).to_have_count(6)
+    expect(page.locator("body")).to_contain_text("σ+ = max(σ, 0)")
+    expect(page.locator("body")).to_contain_text("Esec90 = σ90% / 0.90")
+    expect(page.locator("body")).to_contain_text("Retentionn = (σmax,n / σmax,cycle1) × 100")
+
+    summary_csv = read_blob_text(page, "#pobierz-summary")
+    trace_csv = read_blob_text(page, "#pobierz-trace")
+    assert "cycle_label;cycle_number;is_preload" in summary_csv
+    assert "elastic_recovery_value_pct" in summary_csv
+    assert "stress_retention_pct" in summary_csv
+    assert "sigma90_left_global_index" in summary_csv
+    assert "sigma90_right_stress_plus_mpa" in summary_csv
+    assert "raw_point;global_index;source_file" in trace_csv
+    assert "trapezoid_area_kJ_m3" in trace_csv
+    assert "final_hysteresis_kJ_m3" in trace_csv
+    assert "final_stress_retention_pct" in trace_csv
+    assert "final_Esec90_MPa" in trace_csv
+
+    plots = page.evaluate("window.__plots")
+    assert plots["wykres-zbiorczy"]["traceNames"] == ["cycle 1", "cycle 2", "cycle 3", "cycle 4", "cycle 5"]
+    assert plots["wykres-zbiorczy"]["xTitle"] == "Strain [%]"
+    assert plots["wykres-zbiorczy"]["yTitle"] == "Stress+ [MPa]"
+    assert plots["wykres-force"]["traceNames"] == ["cycle 1", "cycle 2", "cycle 3", "cycle 4", "cycle 5"]
+    assert "preload" not in plots["wykres-trendy"]["traceNames"]
 
     expect(page.locator("#wykres-zbiorczy")).to_have_attribute("data-plotly-rendered", "true")
-    expect(page.locator("#wykres-petle")).to_have_attribute("data-plotly-rendered", "true")
+    expect(page.locator("#wykres-force")).to_have_attribute("data-plotly-rendered", "true")
     expect(page.locator("#wykres-trendy")).to_have_attribute("data-plotly-rendered", "true")
 
 
