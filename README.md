@@ -77,5 +77,3 @@ make test
 ```
 
 CI uruchamia `make test` w GitHub Actions dla `pull_request` i pushy do `main`.
-
-Testowy tekst do sprawdzenia workflow.
