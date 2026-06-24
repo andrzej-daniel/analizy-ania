@@ -1,0 +1,16 @@
+[project]
+name = "analiza-ania"
+version = "0.1.0"
+description = "Local portal for cyclic compression analysis."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "playwright>=1.60.0",
+    "pytest>=9.1.1",
+]
