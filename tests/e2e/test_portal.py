@@ -135,6 +135,8 @@ def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page)
     assert "sigma90_right_stress_plus_mpa" in summary_csv
     assert "raw_point;global_index;source_file" in trace_csv
     assert "trapezoid_area_kJ_m3" in trace_csv
+    assert "force_for_fd_n" in trace_csv
+    assert "force_plus_n" not in trace_csv
     assert "final_hysteresis_kJ_m3" in trace_csv
     assert "final_stress_retention_pct" in trace_csv
     assert "final_Esec90_MPa" in trace_csv
@@ -144,6 +146,7 @@ def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page)
     assert plots["wykres-zbiorczy"]["xTitle"] == "Strain [%]"
     assert plots["wykres-zbiorczy"]["yTitle"] == "Stress+ [MPa]"
     assert plots["wykres-force"]["traceNames"] == ["cycle 1", "cycle 2", "cycle 3", "cycle 4", "cycle 5"]
+    assert plots["wykres-force"]["yTitle"] == "Force [N]"
     assert "preload" not in plots["wykres-trendy"]["traceNames"]
 
     expect(page.locator("#wykres-zbiorczy")).to_have_attribute("data-plotly-rendered", "true")

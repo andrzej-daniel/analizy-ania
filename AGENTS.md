@@ -27,10 +27,11 @@ Portal jest statyczny i serwowany przez `uv run python scripts/serve_portal.py`.
 
 - Wyniki licz bezposrednio z surowych punktow CSV z Trapezium, nie z gotowych parametrow raportowanych przez aparat.
 - Jesli pomiar ma kilka plikow CSV, traktuj je jako jeden ciagly pomiar jednej probki.
-- Zachowuj `globalIndex`, `sourceFile` i `sourceRow`, zeby kazdy wynik dal sie powiazac z punktem zrodlowym.
+- Zachowuj `globalIndex`, `sourceFile` i `sourceRow`, zeby kazdy wynik dal sie powiazac z punktem zrodlowym. `sourceRow` ma wskazywac rzeczywista linie w oryginalnym pliku CSV, nie numer po odfiltrowaniu naglowkow.
 - Pierwszy wykryty cykl traktuj jako preload/preconditioning, jesli pomiar ma co najmniej dwa cykle.
 - Preload zostaje w danych i QC, ale nie jest punktem odniesienia dla retention/softening i nie pojawia sie na glownych wykresach publikacyjnych.
 - Do obliczen stress-strain uzywaj `stressPlus = max(stressRaw, 0)` oraz `strainFrac = displacement / h0`.
+- Do obliczen force-displacement uzywaj surowej sily `force` z CSV. Nie zeruj ujemnych wartosci sily do `F+`, chyba ze uzytkownik swiadomie zmieni metodologie i poprosi o taka korekte.
 - `strain_%` sluzy tylko do prezentacji.
 - Retention i softening licz wzgledem `cycle 1`, czyli pierwszego cyklu po preloadzie.
 - Nie usuwaj eksportu `trace CSV`. To kluczowy element transparentnosci recenzenckiej.
@@ -46,7 +47,7 @@ R = (Aunloading / Aloading) * 100
 Esec90 = sigma90 / 0.90
 Retention_n = (sigmaMax_n / sigmaMax_cycle1) * 100
 Softening_n = 100 - Retention_n
-Ai,Fd = ((forcePlus_i + forcePlus_i-1) / 2) * |displacement_i - displacement_i-1|
+Ai,Fd = ((force_i + force_i-1) / 2) * |displacement_i - displacement_i-1|
 HFd = Aloading,Fd - Aunloading,Fd
 elastic recovery = RFd = (Aunloading,Fd / Aloading,Fd) * 100
 ```

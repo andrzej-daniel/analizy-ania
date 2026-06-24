@@ -40,6 +40,7 @@ console.log('— scalanie i segmentacja —');
   ok(r.liczbaPunktow === 199117, `globalnie ${r.liczbaPunktow} punktów po scaleniu`);
   ok(r.punkty[0].globalIndex === 1 && r.punkty.at(-1).globalIndex === r.liczbaPunktow, 'utworzono globalny indeks punktów');
   ok(r.punkty.every(p => p.sourceFile && p.sourceRow > 0), 'każdy punkt zachowuje plik źródłowy i wiersz źródłowy');
+  ok(r.punkty[0].sourceRow === 4, `sourceRow wskazuje rzeczywistą linię CSV po nagłówkach (${r.punkty[0].sourceRow})`);
   ok(r.wyniki.length === 6, 'wykryto 6 cykli');
   ok(r.hasPreload === true, 'pierwszy cykl jest automatycznie traktowany jako preload');
   ok(r.wyniki[0].cycleLabel === 'preload' && r.wyniki[0].isPreload, 'preload pozostaje w wynikach/QC');
@@ -82,11 +83,15 @@ console.log('— sigma+ i trace punkt-po-punkcie —');
 console.log('— force-displacement i elastic recovery —');
 {
   const r = analizuj(LISTY, null, NAZWY);
+  ok(r.wyniki[0].aUnloadingFdMj < 0, 'preload zachowuje ujemną pracę unloading z surowej siły F');
+  ok(r.wyniki[0].elasticRecoveryValuePct < 0, 'elastic recovery preloadu może być ujemne przy surowym F');
+  const oczekiwaneHFd = [97.02, 46.78, 39.52, 30.96, 29.58, 27.62];
   r.wyniki.forEach(w => {
+    blisko(w.fdHysteresisMj, oczekiwaneHFd[w.cycleRawIndex - 1], 0.8, `HFd z surowej siły (${w.cycleLabel})`);
     bliskoAbs(w.fdHysteresisMj, w.aLoadingFdMj - w.aUnloadingFdMj, 1e-9, `HFd = Aloading,Fd - Aunloading,Fd (${w.cycleLabel})`);
     bliskoAbs(w.forceResiliencePct, 100 * w.aUnloadingFdMj / w.aLoadingFdMj, 1e-9, `RFd = Aunloading,Fd/Aloading,Fd (${w.cycleLabel})`);
     bliskoAbs(w.elasticRecoveryValuePct, w.forceResiliencePct, 1e-12, `elastic recovery alias RFd (${w.cycleLabel})`);
-    ok(w.elasticRecoveryValuePct > 0 && w.elasticRecoveryValuePct < 100, `elastic recovery w zakresie (0,100)% (${w.cycleLabel})`);
+    if (!w.isPreload) ok(w.elasticRecoveryValuePct > 0 && w.elasticRecoveryValuePct < 100, `elastic recovery w zakresie (0,100)% (${w.cycleLabel})`);
   });
 }
 
@@ -111,6 +116,7 @@ console.log('— eksporty CSV —');
   ok(summary.includes('elastic_recovery_value_pct') && summary.includes('stress_retention_pct'), 'summary CSV zawiera recovery i retention');
   ok(summary.includes('sigma90_left_global_index') && summary.includes('sigma90_right_stress_plus_mpa'), 'summary CSV zachowuje punkty interpolacji');
   ok(trace.startsWith('raw_point;global_index;source_file'), 'trace CSV ma nagłówek punktów surowych');
+  ok(trace.includes('force_for_fd_n') && !trace.includes('force_plus_n'), 'trace CSV dokumentuje surową siłę używaną w F-d');
   ok(trace.includes('trapezoid_area_kJ_m3') && trace.includes('final_hysteresis_kJ_m3'), 'trace CSV zawiera trapezy i parametry końcowe');
   ok(trace.includes('final_stress_retention_pct') && trace.includes('final_Esec90_MPa'), 'trace CSV zawiera końcowe metryki mechaniczne');
 }
@@ -149,6 +155,9 @@ console.log('— walidacja: złe h0 —');
   let komunikat = '';
   try { analizuj([LISTY[0]], -5, [NAZWY[0]]); } catch (e) { komunikat = e.message; }
   ok(komunikat.includes('h0'), 'błąd dla h0 ≤ 0');
+  komunikat = '';
+  try { analizuj([LISTY[0]], 0, [NAZWY[0]]); } catch (e) { komunikat = e.message; }
+  ok(komunikat.includes('h0'), 'błąd dla jawnego h0 = 0');
 }
 
 console.log('— parser: format bez cudzysłowów, separator ; —');

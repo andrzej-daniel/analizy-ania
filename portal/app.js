@@ -11,7 +11,7 @@ const LICZBA_CYKLI_PUBLIKACYJNYCH = 5;
 
 function parsujCsv(tekst) {
   const wiersze = [];
-  for (const surowa of tekst.split(/\r?\n/)) {
+  for (const [nr, surowa] of tekst.split(/\r?\n/).entries()) {
     const linia = surowa.trim();
     if (!linia) continue;
     let pola;
@@ -25,6 +25,7 @@ function parsujCsv(tekst) {
     if (pola.length < 5) continue;
     const w = pola.slice(0, 5).map(p => Number(p.trim().replace(',', '.')));
     if (w.some(Number.isNaN)) continue;
+    w.sourceLine = nr + 1;
     wiersze.push(w); // [czas, sila, przemieszczenie, naprezenie, rozstaw]
   }
   return wiersze;
@@ -55,7 +56,7 @@ function waliduj(listyWierszy, nazwy) {
         spacing: w[4],
         sourceFile: nazwa,
         sourceFileIndex: i,
-        sourceRow: j + 1,
+        sourceRow: w.sourceLine ?? j + 1,
       });
     });
   });
@@ -222,7 +223,7 @@ function wzbogacPunkty(dane, h0) {
     strainFrac: p.displacement / h0,
     strainPct: 100 * p.displacement / h0,
     stressPlus: Math.max(p.stressRaw, 0),
-    forcePlus: Math.max(p.force, 0),
+    forceForFd: p.force,
     negativeStressZeroed: p.stressRaw < 0,
   }));
 }
@@ -264,7 +265,7 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     const stressAvg = prev ? 0.5 * (p.stressPlus + prev.stressPlus) : null;
     const trapezoidAreaKJm3 = prev ? stressAvg * deltaStrain * 1000 : 0;
     const deltaDisplacement = prev ? Math.abs(p.displacement - prev.displacement) : 0;
-    const forceAvg = prev ? 0.5 * (p.forcePlus + prev.forcePlus) : null;
+    const forceAvg = prev ? 0.5 * (p.forceForFd + prev.forceForFd) : null;
     const fdTrapezoidAreaMj = prev ? forceAvg * deltaDisplacement : 0;
 
     if (intervalPhase === 'loading') {
@@ -290,7 +291,7 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
       intervalPhase,
       displacement: p.displacement,
       forceRaw: p.force,
-      forcePlus: p.forcePlus,
+      forceForFd: p.forceForFd,
       strainFrac: p.strainFrac,
       strainPct: p.strainPct,
       stressRaw: p.stressRaw,
@@ -346,7 +347,6 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     sigmaMax: Math.max(...punkty.map(p => p.stressPlus)),
     stressRawMin: Math.min(...punkty.map(p => p.stressRaw)),
     fMax: Math.max(...punkty.map(p => p.force)),
-    forcePlusMax: Math.max(...punkty.map(p => p.forcePlus)),
     aLoadingKJm3,
     aUnloadingKJm3,
     hysteresisKJm3,
@@ -508,7 +508,7 @@ function zrobTraceCsv({ trace }) {
   const naglowki = [
     'raw_point', 'global_index', 'source_file', 'source_row',
     'time_s', 'cycle_label', 'cycle_number', 'is_preload', 'point_in_cycle',
-    'phase', 'interval_phase', 'displacement_mm', 'force_raw_n', 'force_plus_n',
+    'phase', 'interval_phase', 'displacement_mm', 'force_raw_n', 'force_for_fd_n',
     'strain_frac', 'strain_pct', 'stress_raw_mpa', 'stress_plus_mpa',
     'negative_stress_zeroed', 'previous_global_index', 'delta_strain_abs',
     'stress_avg_mpa', 'trapezoid_area_kJ_m3', 'delta_displacement_abs_mm',
@@ -535,7 +535,7 @@ function zrobTraceCsv({ trace }) {
     interval_phase: r.intervalPhase,
     displacement_mm: r.displacement,
     force_raw_n: r.forceRaw,
-    force_plus_n: r.forcePlus,
+    force_for_fd_n: r.forceForFd,
     strain_frac: r.strainFrac,
     strain_pct: r.strainPct,
     stress_raw_mpa: r.stressRaw,
@@ -574,7 +574,7 @@ function analizuj(listyWierszy, h0Wejsciowe, nazwy) {
   const { bledy, ostrzezenia, zakresy, dane } = waliduj(listyWierszy, nazwy);
   if (bledy.length) throw new Error(bledy.join('\n'));
 
-  const h0 = h0Wejsciowe || dane[0].spacing;
+  const h0 = h0Wejsciowe === null || h0Wejsciowe === undefined ? dane[0].spacing : h0Wejsciowe;
   if (!(h0 > 0)) throw new Error(`Nieprawidlowe h0 (rozstaw w danych: ${dane[0].spacing} mm).`);
 
   const punkty = wzbogacPunkty(dane, h0);
@@ -810,7 +810,7 @@ if (typeof document !== 'undefined') {
       const s = decymuj(w.points);
       return {
         x: s.map(p => p.displacement),
-        y: s.map(p => p.forcePlus),
+        y: s.map(p => p.forceForFd),
         name: w.cycleLabel,
         mode: 'lines',
         line: { color: kolory[i % kolory.length], width: 1.5 },
@@ -819,7 +819,7 @@ if (typeof document !== 'undefined') {
     Plotly.newPlot('wykres-force', slady, {
       title: 'Force-displacement loops (cycles 1-5, no preload)',
       xaxis: { title: { text: 'Displacement [mm]', standoff: 8 }, rangemode: 'tozero' },
-      yaxis: { title: 'Force+ [N]' },
+      yaxis: { title: 'Force [N]' },
       legend: { orientation: 'h', yanchor: 'top', y: -0.22 },
       margin: { t: 55, b: 95 },
     }, { responsive: true, displaylogo: false });

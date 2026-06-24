@@ -44,12 +44,17 @@ R = (Aunloading / Aloading) × 100
 Esec90 = σ90% / 0.90
 Retentionn = (σmax,n / σmax,cycle1) × 100
 Softeningn = 100 - Retentionn
+Ai,Fd = ((Fi + Fi-1) / 2) × |di - di-1|  [mJ]
+HFd = Aloading,Fd - Aunloading,Fd
+elastic recovery = RFd = (Aunloading,Fd / Aloading,Fd) × 100
 ```
+
+Korekcja `σ+ = max(σ, 0)` dotyczy naprężenia. Analiza force-displacement używa surowej siły `F` z CSV, zgodnie ze wzorem powyżej.
 
 Eksporty:
 
 - `summary CSV`: parametry końcowe per cykl, QC, retention/softening, elastic recovery oraz indeksy i wartości punktów użytych do interpolacji `σ10`...`σ90`.
-- `trace CSV`: pełna ścieżka punkt-po-punkcie od surowego punktu do trapezu, fazy i parametru końcowego.
+- `trace CSV`: pełna ścieżka punkt-po-punkcie od surowego punktu do trapezu, fazy i parametru końcowego. `source_row` wskazuje rzeczywistą linię w oryginalnym pliku CSV.
 
 ## Testy
 
