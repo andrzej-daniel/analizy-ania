@@ -29,6 +29,28 @@ uv run python scripts/serve_portal.py --port 8000
 
 Uwaga: portal działa lokalnie, ale biblioteka Plotly jest ładowana z CDN w przeglądarce.
 
+## Portal w Streamlit
+
+Alternatywna wersja analizy jest dostępna w Streamlit:
+
+```bash
+make streamlit
+```
+
+Domyślny adres:
+
+```text
+http://127.0.0.1:8501/
+```
+
+Inny port:
+
+```bash
+make streamlit STREAMLIT_PORT=8502
+```
+
+Komenda używa `uv run --with streamlit`, więc Streamlit zostanie pobrany przez `uv`, jeśli nie ma go jeszcze w środowisku.
+
 ## Metodologia
 
 Portal liczy wyniki bezpośrednio z surowych punktów CSV z Trapezium. Pliki jednej próbki są scalane w jeden pomiar, każdy punkt dostaje `globalIndex`, `sourceFile` i `sourceRow`, a preload jest zachowany jako cykl kondycjonujący/QC.
