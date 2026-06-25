@@ -159,11 +159,11 @@ function roundFinite(x, n = 12) {
 
 // ---------- detekcja cykli i wielkosci per cykl ----------
 
-function wykryjCykle(dane) {
+function wykryjCykle(dane, progMm = PROG_MM) {
   const segmenty = [];
   let start = null;
   for (let i = 0; i <= dane.length; i++) {
-    const kontakt = i < dane.length && dane[i].displacement > PROG_MM;
+    const kontakt = i < dane.length && dane[i].displacement > progMm;
     if (kontakt && start === null) {
       start = Math.max(0, i - 1);
     } else if (!kontakt && start !== null) {
@@ -236,7 +236,7 @@ function etykietaCyklu(rawIndex, hasPreload) {
   return { isPreload: false, cycleNumber, cycleLabel: `cycle ${cycleNumber}` };
 }
 
-function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
+function policzCykl(seg, h0, rawIndex = 0, hasPreload = false, progMm = PROG_MM) {
   const { isPreload, cycleNumber, cycleLabel } = etykietaCyklu(rawIndex, hasPreload);
   const maxDisp = Math.max(...seg.map(p => p.displacement));
   const iMax = seg.findIndex(p => p.displacement === maxDisp);
@@ -315,6 +315,7 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
   const resiliencePct = aLoadingKJm3 > 0 ? 100 * aUnloadingKJm3 / aLoadingKJm3 : null;
   const fdHysteresisMj = aLoadingFdMj - aUnloadingFdMj;
   const forceResiliencePct = aLoadingFdMj > 0 ? 100 * aUnloadingFdMj / aLoadingFdMj : null;
+  const elasticEnergyRecoveryPct = forceResiliencePct;
   const interpolations = {};
   for (const poziom of POZIOMY_ODKSZTALCENIA) {
     interpolations[String(Math.round(poziom * 100))] = interpolujPoziom(loadingPoints, poziom);
@@ -322,10 +323,17 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
   const sigma90 = interpolations['90'].stress;
   const eSec90 = sigma90 !== null ? sigma90 / 0.90 : null;
   const first = punkty[0], last = punkty[punkty.length - 1];
+  const startDisplacementMm = first.displacement;
+  const maxDisplacementMm = maxDisp;
+  const endDisplacementMm = last.displacement;
+  const residualDisplacementMm = endDisplacementMm;
+  const elasticDisplacementRecoveryPct = maxDisplacementMm > 0
+    ? 100 * (maxDisplacementMm - residualDisplacementMm) / maxDisplacementMm
+    : null;
   const qcComplete = loadingPoints.length > 1 &&
     punkty.length - loadingPoints.length > 1 &&
-    first.displacement <= PROG_MM &&
-    last.displacement <= PROG_MM;
+    Math.abs(first.displacement) <= progMm &&
+    Math.abs(last.displacement) <= progMm;
   const sources = [...new Set(punkty.map(p => p.sourceFile))];
 
   const wynik = {
@@ -347,6 +355,12 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     sigmaMax: Math.max(...punkty.map(p => p.stressPlus)),
     stressRawMin: Math.min(...punkty.map(p => p.stressRaw)),
     fMax: Math.max(...punkty.map(p => p.force)),
+    startDisplacementMm,
+    maxDisplacementMm,
+    maxDisplacementGlobalIndex: punkty[iMax].globalIndex,
+    endDisplacementMm,
+    residualDisplacementMm,
+    elasticDisplacementRecoveryPct,
     aLoadingKJm3,
     aUnloadingKJm3,
     hysteresisKJm3,
@@ -355,7 +369,8 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     aUnloadingFdMj,
     fdHysteresisMj,
     forceResiliencePct,
-    elasticRecoveryValuePct: forceResiliencePct,
+    elasticEnergyRecoveryPct,
+    elasticRecoveryValuePct: elasticEnergyRecoveryPct,
     interpolations,
     sigmaPoziomy: POZIOMY_ODKSZTALCENIA.map(p => interpolations[String(Math.round(p * 100))].stress),
     sigma10: interpolations['10'].stress,
@@ -366,6 +381,7 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     eSec90,
     stressRetentionPct: null,
     stressSofteningPct: null,
+    qcWarnings: [],
     // Alias dla starszych wykresow/testow lokalnych.
     poleKJm3: hysteresisKJm3,
   };
@@ -378,10 +394,51 @@ function policzCykl(seg, h0, rawIndex = 0, hasPreload = false) {
     row.finalLoadingFdMj = aLoadingFdMj;
     row.finalUnloadingFdMj = aUnloadingFdMj;
     row.finalFdHysteresisMj = fdHysteresisMj;
-    row.finalElasticRecoveryPct = forceResiliencePct;
+    row.finalElasticEnergyRecoveryPct = elasticEnergyRecoveryPct;
+    row.finalElasticDisplacementRecoveryPct = elasticDisplacementRecoveryPct;
+    row.finalElasticRecoveryPct = elasticEnergyRecoveryPct;
+    row.finalResidualDisplacementMm = residualDisplacementMm;
   }
 
+  wynik.qcWarnings = zbudujQcWarnings(wynik, progMm);
   return wynik;
+}
+
+function zbudujQcWarnings(w, progMm = PROG_MM) {
+  const ostrzezenia = [];
+  const n = w.points?.length || 0;
+  const negPct = n ? 100 * w.negativeStressZeroedCount / n : 0;
+
+  if (!w.complete) {
+    ostrzezenia.push(`cykl nie wraca do okolic zera albo nie ma pelnej fazy loading/unloading (prog ${progMm} mm)`);
+  }
+  if (w.loadingPointCount < 10) ostrzezenia.push('bardzo malo punktow w fazie loading');
+  if (w.unloadingPointCount < 10) ostrzezenia.push('bardzo malo punktow w fazie unloading');
+  if (w.maxStrainFrac < 0.90) {
+    ostrzezenia.push('cykl nie osiaga strainFrac = 0.90, wiec sigma90 i Esec90 beda puste albo niewiarygodne');
+  }
+  if (negPct > 10) {
+    ostrzezenia.push(`${negPct.toFixed(1)}% punktow mialo ujemne stressRaw wyzerowane do stressPlus`);
+  }
+  if (!(w.aLoadingKJm3 > 0)) ostrzezenia.push('Aloading stress-strain nie jest dodatnie');
+  if (w.resiliencePct !== null && w.resiliencePct > 100) ostrzezenia.push('resilience stress-strain przekracza 100%');
+  if (w.forceResiliencePct !== null && w.forceResiliencePct < 0) {
+    ostrzezenia.push('RFd/elastic energy recovery jest ujemne, zwykle przez ujemna sile podczas unloading');
+  }
+  if (w.forceResiliencePct !== null && w.forceResiliencePct > 100) {
+    ostrzezenia.push('RFd/elastic energy recovery przekracza 100%');
+  }
+  if (w.elasticDisplacementRecoveryPct !== null &&
+      (w.elasticDisplacementRecoveryPct < 0 || w.elasticDisplacementRecoveryPct > 105)) {
+    ostrzezenia.push('elastic displacement recovery jest poza typowym zakresem 0-105%');
+  }
+  if (Math.abs(w.startDisplacementMm) > progMm) {
+    ostrzezenia.push('poczatek cyklu nie jest blisko displacement = 0 mm');
+  }
+  if (Math.abs(w.endDisplacementMm) > progMm) {
+    ostrzezenia.push('koniec cyklu nie jest blisko displacement = 0 mm');
+  }
+  return ostrzezenia;
 }
 
 // dopasowanie W_n = Winf + A*exp(-(n-1)/tau) — grid po tau + liniowe LSQ
@@ -424,7 +481,7 @@ function zrobCsv(naglowki, wiersze) {
     .join('\n');
 }
 
-function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload }) {
+function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload, progMm }) {
   const interpHeaders = POZIOMY_ODKSZTALCENIA.flatMap(poziom => {
     const pct = Math.round(poziom * 100);
     return [
@@ -438,12 +495,14 @@ function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload }) {
   });
   const naglowki = [
     'cycle_label', 'cycle_number', 'is_preload', 'h0_mm', 'total_points',
-    'source_files', 't_start_s', 't_end_s', 'complete',
+    'cycle_detection_threshold_mm', 'source_files', 't_start_s', 't_end_s', 'complete',
     'loading_points', 'unloading_points', 'negative_stress_zeroed_points',
+    'qc_warnings', 'start_displacement_mm', 'max_displacement_mm', 'max_displacement_global_index',
+    'end_displacement_mm', 'residual_displacement_mm', 'elastic_displacement_recovery_pct',
     'max_strain_frac', 'max_strain_pct', 'max_stress_plus_mpa', 'max_force_n',
     'Aloading_kJ_m3', 'Aunloading_kJ_m3', 'hysteresis_kJ_m3', 'resilience_pct',
     'Aloading_Fd_mJ', 'Aunloading_Fd_mJ', 'hysteresis_Fd_mJ',
-    'force_resilience_pct', 'elastic_recovery_value_pct',
+    'force_resilience_pct', 'elastic_energy_recovery_pct', 'elastic_recovery_value_pct',
     'stress_retention_pct', 'stress_softening_pct', 'Esec90_MPa',
     'sigma10_MPa', 'sigma30_MPa', 'sigma50_MPa', 'sigma70_MPa', 'sigma90_MPa',
     ...interpHeaders,
@@ -459,6 +518,7 @@ function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload }) {
       is_preload: w.isPreload,
       h0_mm: h0,
       total_points: liczbaPunktow,
+      cycle_detection_threshold_mm: progMm ?? PROG_MM,
       source_files: w.sourceFiles.join(', '),
       t_start_s: w.tStart,
       t_end_s: w.tKoniec,
@@ -466,6 +526,13 @@ function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload }) {
       loading_points: w.loadingPointCount,
       unloading_points: w.unloadingPointCount,
       negative_stress_zeroed_points: w.negativeStressZeroedCount,
+      qc_warnings: w.qcWarnings.join(' | '),
+      start_displacement_mm: w.startDisplacementMm,
+      max_displacement_mm: w.maxDisplacementMm,
+      max_displacement_global_index: w.maxDisplacementGlobalIndex,
+      end_displacement_mm: w.endDisplacementMm,
+      residual_displacement_mm: w.residualDisplacementMm,
+      elastic_displacement_recovery_pct: w.elasticDisplacementRecoveryPct,
       max_strain_frac: w.maxStrainFrac,
       max_strain_pct: w.maxStrainPct,
       max_stress_plus_mpa: w.sigmaMax,
@@ -478,6 +545,7 @@ function zrobSummaryCsv({ h0, liczbaPunktow, wyniki, hasPreload }) {
       Aunloading_Fd_mJ: w.aUnloadingFdMj,
       hysteresis_Fd_mJ: w.fdHysteresisMj,
       force_resilience_pct: w.forceResiliencePct,
+      elastic_energy_recovery_pct: w.elasticEnergyRecoveryPct,
       elastic_recovery_value_pct: w.elasticRecoveryValuePct,
       stress_retention_pct: w.stressRetentionPct,
       stress_softening_pct: w.stressSofteningPct,
@@ -517,7 +585,9 @@ function zrobTraceCsv({ trace }) {
     'cumulative_unloading_Fd_mJ', 'final_loading_area_kJ_m3',
     'final_unloading_area_kJ_m3', 'final_hysteresis_kJ_m3',
     'final_resilience_pct', 'final_loading_Fd_mJ', 'final_unloading_Fd_mJ',
-    'final_Fd_hysteresis_mJ', 'final_elastic_recovery_pct',
+    'final_Fd_hysteresis_mJ', 'final_elastic_energy_recovery_pct',
+    'final_elastic_displacement_recovery_pct', 'final_elastic_recovery_pct',
+    'final_residual_displacement_mm',
     'final_stress_retention_pct', 'final_stress_softening_pct',
     'final_Esec90_MPa', 'final_sigma90_MPa',
   ];
@@ -559,7 +629,10 @@ function zrobTraceCsv({ trace }) {
     final_loading_Fd_mJ: r.finalLoadingFdMj,
     final_unloading_Fd_mJ: r.finalUnloadingFdMj,
     final_Fd_hysteresis_mJ: r.finalFdHysteresisMj,
+    final_elastic_energy_recovery_pct: r.finalElasticEnergyRecoveryPct,
+    final_elastic_displacement_recovery_pct: r.finalElasticDisplacementRecoveryPct,
     final_elastic_recovery_pct: r.finalElasticRecoveryPct,
+    final_residual_displacement_mm: r.finalResidualDisplacementMm,
     final_stress_retention_pct: r.finalStressRetentionPct,
     final_stress_softening_pct: r.finalStressSofteningPct,
     final_Esec90_MPa: r.finalESec90,
@@ -570,19 +643,21 @@ function zrobTraceCsv({ trace }) {
 
 // ---------- analiza calosci ----------
 
-function analizuj(listyWierszy, h0Wejsciowe, nazwy) {
+function analizuj(listyWierszy, h0Wejsciowe, nazwy, opcje = {}) {
+  opcje = opcje || {};
   const { bledy, ostrzezenia, zakresy, dane } = waliduj(listyWierszy, nazwy);
   if (bledy.length) throw new Error(bledy.join('\n'));
 
   const h0 = h0Wejsciowe === null || h0Wejsciowe === undefined ? dane[0].spacing : h0Wejsciowe;
   if (!(h0 > 0)) throw new Error(`Nieprawidlowe h0 (rozstaw w danych: ${dane[0].spacing} mm).`);
+  const progMm = Number.isFinite(opcje.progMm) && opcje.progMm >= 0 ? opcje.progMm : PROG_MM;
 
   const punkty = wzbogacPunkty(dane, h0);
-  const segmenty = wykryjCykle(punkty);
-  if (!segmenty.length) throw new Error(`Nie wykryto zadnych cykli sciskania (przemieszczenie nigdy nie przekracza ${PROG_MM} mm).`);
+  const segmenty = wykryjCykle(punkty, progMm);
+  if (!segmenty.length) throw new Error(`Nie wykryto zadnych cykli sciskania (przemieszczenie nigdy nie przekracza ${progMm} mm).`);
 
   const hasPreload = segmenty.length >= 2;
-  const wyniki = segmenty.map((seg, i) => policzCykl(seg, h0, i, hasPreload));
+  const wyniki = segmenty.map((seg, i) => policzCykl(seg, h0, i, hasPreload, progMm));
   const cycle1 = wyniki.find(w => !w.isPreload);
   const sigmaRef = cycle1?.sigmaMax || null;
   wyniki.forEach(w => {
@@ -591,6 +666,9 @@ function analizuj(listyWierszy, h0Wejsciowe, nazwy) {
       w.stressSofteningPct = 100 - w.stressRetentionPct;
       if (Math.abs(w.stressSofteningPct) < 1e-10) w.stressSofteningPct = 0;
       if (Math.abs(w.stressRetentionPct - 100) < 1e-10) w.stressRetentionPct = 100;
+      if (w.cycleNumber > 1 && w.stressRetentionPct > 100.5) {
+        w.qcWarnings.push('stress retention przekracza 100% wzgledem cycle 1');
+      }
     }
     for (const row of w.traceRows) {
       row.finalStressRetentionPct = w.stressRetentionPct;
@@ -603,6 +681,7 @@ function analizuj(listyWierszy, h0Wejsciowe, nazwy) {
 
   return {
     h0,
+    progMm,
     liczbaPunktow: punkty.length,
     punkty,
     cykle: wyniki.map(w => w.points),
@@ -680,7 +759,13 @@ if (typeof document !== 'undefined') {
     try {
       const listy = await Promise.all(wybranePliki.map(odczytajPlik));
       const h0Pole = parseFloat(document.getElementById('h0').value.replace(',', '.'));
-      const rezultat = analizuj(listy, Number.isFinite(h0Pole) ? h0Pole : null, wybranePliki.map(p => p.name));
+      const progPole = parseFloat(document.getElementById('prog-mm').value.replace(',', '.'));
+      const rezultat = analizuj(
+        listy,
+        Number.isFinite(h0Pole) ? h0Pole : null,
+        wybranePliki.map(p => p.name),
+        { progMm: Number.isFinite(progPole) && progPole >= 0 ? progPole : PROG_MM }
+      );
       rezultat.zakresy.forEach((z, i) => {
         const li = document.getElementById(`plik-${i}`);
         if (li) li.textContent = `${z.nazwa} — t = ${z.od.toFixed(1)}-${z.do.toFixed(1)} s, ${z.n.toLocaleString('pl-PL')} punktow`;
@@ -725,7 +810,7 @@ if (typeof document !== 'undefined') {
 
     const kolEnergia = ['', 'rola', 'sigma max [MPa]', 'strain max [%]', 'Aloading [kJ/m3]', 'Aunloading [kJ/m3]',
       'hysteresis H [kJ/m3]', 'resilience [%]', 'Aloading F-d [mJ]', 'Aunloading F-d [mJ]',
-      'HFd [mJ]', 'elastic recovery [%]', 'max force [N]'];
+      'HFd [mJ]', 'elastic energy recovery RFd [%]', 'displacement recovery [%]', 'max force [N]'];
     let html = '<tr>' + kolEnergia.map(h => `<th>${h}</th>`).join('') + '</tr>';
     wyniki.forEach(w => {
       const klasa = w.isPreload ? ' class="preload"' : '';
@@ -733,7 +818,8 @@ if (typeof document !== 'undefined') {
         `<td>${fmt(w.sigmaMax)}</td><td>${fmt(w.maxStrainPct, 2)}</td>` +
         `<td>${fmt(w.aLoadingKJm3, 2)}</td><td>${fmt(w.aUnloadingKJm3, 2)}</td><td>${fmt(w.hysteresisKJm3, 2)}</td>` +
         `<td>${fmt(w.resiliencePct, 1)}</td><td>${fmt(w.aLoadingFdMj, 2)}</td><td>${fmt(w.aUnloadingFdMj, 2)}</td>` +
-        `<td>${fmt(w.fdHysteresisMj, 2)}</td><td>${fmt(w.elasticRecoveryValuePct, 1)}</td><td>${fmt(w.fMax, 2)}</td></tr>`;
+        `<td>${fmt(w.fdHysteresisMj, 2)}</td><td>${fmt(w.elasticEnergyRecoveryPct, 1)}</td>` +
+        `<td>${fmt(w.elasticDisplacementRecoveryPct, 1)}</td><td>${fmt(w.fMax, 2)}</td></tr>`;
     });
     document.getElementById('tabela').innerHTML = html;
 
@@ -749,14 +835,16 @@ if (typeof document !== 'undefined') {
     });
     document.getElementById('tabela-mech').innerHTML = html2;
 
-    const kolQc = ['', 'complete', 'loading pts', 'unloading pts', 'zeroed negative stress',
-      'raw stress min [MPa]', 'source files'];
+    const kolQc = ['', 'complete', 'start d [mm]', 'max d [mm]', 'end d [mm]', 'loading pts',
+      'unloading pts', 'zeroed negative stress', 'raw stress min [MPa]', 'QC warnings', 'source files'];
     let htmlQc = '<tr>' + kolQc.map(h => `<th>${h}</th>`).join('') + '</tr>';
     wyniki.forEach(w => {
       const klasa = w.isPreload ? ' class="preload"' : '';
       htmlQc += `<tr${klasa}><td>${w.cycleLabel}</td><td>${w.complete ? 'tak' : 'nie'}</td>` +
+        `<td>${fmt(w.startDisplacementMm, 4)}</td><td>${fmt(w.maxDisplacementMm, 4)}</td><td>${fmt(w.endDisplacementMm, 4)}</td>` +
         `<td>${w.loadingPointCount}</td><td>${w.unloadingPointCount}</td><td>${w.negativeStressZeroedCount}</td>` +
-        `<td>${fmt(w.stressRawMin)}</td><td>${escapeHtml(w.sourceFiles.join(', '))}</td></tr>`;
+        `<td>${fmt(w.stressRawMin)}</td><td>${escapeHtml(w.qcWarnings.join(' | ') || 'OK')}</td>` +
+        `<td>${escapeHtml(w.sourceFiles.join(', '))}</td></tr>`;
     });
     document.getElementById('tabela-qc').innerHTML = htmlQc;
 
@@ -772,17 +860,71 @@ if (typeof document !== 'undefined') {
 
     document.getElementById('podsumowanie').textContent =
       `Punktow pomiarowych: ${liczbaPunktow.toLocaleString('pl-PL')} · h0 = ${fmt(h0)} mm · ` +
-      `wykryto cykli: ${cykle.length}` + (hasPreload ? ' · pierwszy cykl traktowany jako preload/QC' : '');
+      `prog segmentacji = ${fmt(rezultat.progMm, 4)} mm · wykryto cykli: ${cykle.length}` +
+      (hasPreload ? ' · pierwszy cykl traktowany jako preload/QC' : '');
 
     ustawPobieranie('pobierz-summary', 'wyniki_summary.csv', zrobSummaryCsv(rezultat));
     ustawPobieranie('pobierz-trace', 'trace_punkt_po_punkcie.csv', zrobTraceCsv(rezultat));
 
+    rysujSegmentacje(rezultat, kolory);
     rysujStressStrain(publikacyjne, kolory);
     rysujForceDisplacement(publikacyjne, kolory);
     rysujTrendy(wlasciwe, kolory);
 
     document.getElementById('wyniki').style.display = 'block';
     document.getElementById('wyniki').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function rysujSegmentacje(rezultat, kolory) {
+    const all = decymuj(rezultat.punkty, 5000);
+    const slady = [{
+      x: all.map(p => p.time),
+      y: all.map(p => p.displacement),
+      name: 'raw displacement',
+      mode: 'lines',
+      line: { color: '#cbd5e1', width: 1 },
+      hovertemplate: 't=%{x:.3f} s<br>d=%{y:.4f} mm<extra>raw</extra>',
+    }];
+
+    rezultat.wyniki.forEach((w, i) => {
+      const s = decymuj(w.points, 1200);
+      slady.push({
+        x: s.map(p => p.time),
+        y: s.map(p => p.displacement),
+        name: w.isPreload ? 'preload/QC' : w.cycleLabel,
+        mode: 'lines',
+        line: { color: w.isPreload ? '#94a3b8' : kolory[i % kolory.length], width: w.isPreload ? 1.8 : 2.2 },
+        hovertemplate: 't=%{x:.3f} s<br>d=%{y:.4f} mm<extra>%{fullData.name}</extra>',
+      });
+    });
+
+    Plotly.newPlot('wykres-segmentacja', slady, {
+      title: 'Cycle segmentation preview',
+      xaxis: { title: { text: 'Time [s]', standoff: 8 } },
+      yaxis: { title: 'Displacement [mm]' },
+      legend: { orientation: 'h', yanchor: 'top', y: -0.22 },
+      margin: { t: 55, b: 95 },
+      shapes: [{
+        type: 'line',
+        xref: 'paper',
+        x0: 0,
+        x1: 1,
+        y0: rezultat.progMm,
+        y1: rezultat.progMm,
+        line: { color: '#ef4444', width: 1, dash: 'dot' },
+      }],
+      annotations: [{
+        xref: 'paper',
+        yref: 'y',
+        x: 1,
+        y: rezultat.progMm,
+        xanchor: 'right',
+        yanchor: 'bottom',
+        text: `threshold ${fmt(rezultat.progMm, 4)} mm`,
+        showarrow: false,
+        font: { size: 11, color: '#b91c1c' },
+      }],
+    }, { responsive: true, displaylogo: false });
   }
 
   function rysujStressStrain(wyniki, kolory) {
@@ -834,7 +976,8 @@ if (typeof document !== 'undefined') {
       ['Stress softening [%]', wyniki.map(w => w.stressSofteningPct)],
       ['Esec90 [MPa]', wyniki.map(w => w.eSec90)],
       ['F-d hysteresis [mJ]', wyniki.map(w => w.fdHysteresisMj)],
-      ['Elastic recovery [%]', wyniki.map(w => w.elasticRecoveryValuePct)],
+      ['Elastic energy recovery RFd [%]', wyniki.map(w => w.elasticEnergyRecoveryPct)],
+      ['Displacement recovery [%]', wyniki.map(w => w.elasticDisplacementRecoveryPct)],
       ['Max force [N]', wyniki.map(w => w.fMax)],
     ];
     const slady = metryki.map((m, i) => ({

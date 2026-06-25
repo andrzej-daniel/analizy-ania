@@ -84,14 +84,19 @@ console.log('— force-displacement i elastic recovery —');
 {
   const r = analizuj(LISTY, null, NAZWY);
   ok(r.wyniki[0].aUnloadingFdMj < 0, 'preload zachowuje ujemną pracę unloading z surowej siły F');
-  ok(r.wyniki[0].elasticRecoveryValuePct < 0, 'elastic recovery preloadu może być ujemne przy surowym F');
+  ok(r.wyniki[0].elasticEnergyRecoveryPct < 0, 'elastic energy recovery preloadu może być ujemne przy surowym F');
   const oczekiwaneHFd = [97.02, 46.78, 39.52, 30.96, 29.58, 27.62];
   r.wyniki.forEach(w => {
     blisko(w.fdHysteresisMj, oczekiwaneHFd[w.cycleRawIndex - 1], 0.8, `HFd z surowej siły (${w.cycleLabel})`);
     bliskoAbs(w.fdHysteresisMj, w.aLoadingFdMj - w.aUnloadingFdMj, 1e-9, `HFd = Aloading,Fd - Aunloading,Fd (${w.cycleLabel})`);
     bliskoAbs(w.forceResiliencePct, 100 * w.aUnloadingFdMj / w.aLoadingFdMj, 1e-9, `RFd = Aunloading,Fd/Aloading,Fd (${w.cycleLabel})`);
-    bliskoAbs(w.elasticRecoveryValuePct, w.forceResiliencePct, 1e-12, `elastic recovery alias RFd (${w.cycleLabel})`);
-    if (!w.isPreload) ok(w.elasticRecoveryValuePct > 0 && w.elasticRecoveryValuePct < 100, `elastic recovery w zakresie (0,100)% (${w.cycleLabel})`);
+    bliskoAbs(w.elasticEnergyRecoveryPct, w.forceResiliencePct, 1e-12, `elastic energy recovery = RFd (${w.cycleLabel})`);
+    bliskoAbs(w.elasticRecoveryValuePct, w.elasticEnergyRecoveryPct, 1e-12, `stary alias elastic_recovery_value_pct zachowany (${w.cycleLabel})`);
+    ok(w.elasticDisplacementRecoveryPct !== null, `wyliczono elastic displacement recovery (${w.cycleLabel})`);
+    if (!w.isPreload) {
+      ok(w.elasticEnergyRecoveryPct > 0 && w.elasticEnergyRecoveryPct < 100, `elastic energy recovery w zakresie (0,100)% (${w.cycleLabel})`);
+      ok(w.elasticDisplacementRecoveryPct > 95 && w.elasticDisplacementRecoveryPct <= 105, `displacement recovery blisko powrotu do zera (${w.cycleLabel})`);
+    }
   });
 }
 
@@ -113,11 +118,14 @@ console.log('— eksporty CSV —');
   const summary = zrobSummaryCsv(r);
   const trace = zrobTraceCsv(r);
   ok(summary.startsWith('cycle_label;cycle_number;is_preload'), 'summary CSV ma nagłówek cykli');
-  ok(summary.includes('elastic_recovery_value_pct') && summary.includes('stress_retention_pct'), 'summary CSV zawiera recovery i retention');
+  ok(summary.includes('elastic_energy_recovery_pct') && summary.includes('elastic_recovery_value_pct'), 'summary CSV zawiera nową nazwę recovery i alias zgodności');
+  ok(summary.includes('elastic_displacement_recovery_pct') && summary.includes('stress_retention_pct'), 'summary CSV zawiera recovery przemieszczenia i retention');
+  ok(summary.includes('cycle_detection_threshold_mm') && summary.includes('qc_warnings'), 'summary CSV zawiera próg segmentacji i ostrzeżenia QC');
   ok(summary.includes('sigma90_left_global_index') && summary.includes('sigma90_right_stress_plus_mpa'), 'summary CSV zachowuje punkty interpolacji');
   ok(trace.startsWith('raw_point;global_index;source_file'), 'trace CSV ma nagłówek punktów surowych');
   ok(trace.includes('force_for_fd_n') && !trace.includes('force_plus_n'), 'trace CSV dokumentuje surową siłę używaną w F-d');
   ok(trace.includes('trapezoid_area_kJ_m3') && trace.includes('final_hysteresis_kJ_m3'), 'trace CSV zawiera trapezy i parametry końcowe');
+  ok(trace.includes('final_elastic_energy_recovery_pct') && trace.includes('final_elastic_displacement_recovery_pct'), 'trace CSV zawiera obie metryki recovery');
   ok(trace.includes('final_stress_retention_pct') && trace.includes('final_Esec90_MPa'), 'trace CSV zawiera końcowe metryki mechaniczne');
 }
 

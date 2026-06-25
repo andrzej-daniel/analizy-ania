@@ -116,20 +116,26 @@ def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page)
     expect(page.locator("#tabela-mech tr")).to_have_count(7)
     expect(page.locator("#tabela-qc tr")).to_have_count(7)
     expect(page.locator("#tabela")).to_contain_text("preconditioning/QC")
-    expect(page.locator("#tabela")).to_contain_text("elastic recovery")
+    expect(page.locator("#tabela")).to_contain_text("elastic energy recovery")
+    expect(page.locator("#tabela")).to_contain_text("displacement recovery")
     expect(page.locator("#tabela-mech")).to_contain_text("stress retention")
     expect(page.locator("#tabela-mech")).to_contain_text("Esec90")
     expect(page.locator("#tabela-qc")).to_contain_text("zeroed negative stress")
 
-    expect(page.locator(".info")).to_have_count(6)
+    expect(page.locator(".info")).to_have_count(7)
     expect(page.locator("body")).to_contain_text("σ+ = max(σ, 0)")
     expect(page.locator("body")).to_contain_text("Esec90 = σ90% / 0.90")
     expect(page.locator("body")).to_contain_text("Retentionn = (σmax,n / σmax,cycle1) × 100")
+    expect(page.locator("body")).to_contain_text("elastic displacement recovery = (dmax - dend) / dmax × 100")
 
     summary_csv = read_blob_text(page, "#pobierz-summary")
     trace_csv = read_blob_text(page, "#pobierz-trace")
     assert "cycle_label;cycle_number;is_preload" in summary_csv
+    assert "elastic_energy_recovery_pct" in summary_csv
+    assert "elastic_displacement_recovery_pct" in summary_csv
     assert "elastic_recovery_value_pct" in summary_csv
+    assert "cycle_detection_threshold_mm" in summary_csv
+    assert "qc_warnings" in summary_csv
     assert "stress_retention_pct" in summary_csv
     assert "sigma90_left_global_index" in summary_csv
     assert "sigma90_right_stress_plus_mpa" in summary_csv
@@ -138,10 +144,14 @@ def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page)
     assert "force_for_fd_n" in trace_csv
     assert "force_plus_n" not in trace_csv
     assert "final_hysteresis_kJ_m3" in trace_csv
+    assert "final_elastic_energy_recovery_pct" in trace_csv
+    assert "final_elastic_displacement_recovery_pct" in trace_csv
     assert "final_stress_retention_pct" in trace_csv
     assert "final_Esec90_MPa" in trace_csv
 
     plots = page.evaluate("window.__plots")
+    assert "wykres-segmentacja" in plots
+    assert plots["wykres-segmentacja"]["title"] == "Cycle segmentation preview"
     assert plots["wykres-zbiorczy"]["traceNames"] == ["cycle 1", "cycle 2", "cycle 3", "cycle 4", "cycle 5"]
     assert plots["wykres-zbiorczy"]["xTitle"] == "Strain [%]"
     assert plots["wykres-zbiorczy"]["yTitle"] == "Stress+ [MPa]"
@@ -152,6 +162,7 @@ def test_portal_analyzes_uploaded_csv_files_with_transparent_outputs(page: Page)
     expect(page.locator("#wykres-zbiorczy")).to_have_attribute("data-plotly-rendered", "true")
     expect(page.locator("#wykres-force")).to_have_attribute("data-plotly-rendered", "true")
     expect(page.locator("#wykres-trendy")).to_have_attribute("data-plotly-rendered", "true")
+    expect(page.locator("#wykres-segmentacja")).to_have_attribute("data-plotly-rendered", "true")
 
 
 def test_portal_shows_error_for_invalid_csv(page: Page, tmp_path: Path) -> None:

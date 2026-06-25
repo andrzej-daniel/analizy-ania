@@ -60,6 +60,9 @@
       <label>h₀ — wysokość próbki [mm]:
         <input type="number" id="h0" step="0.0001" min="0.0001" placeholder="auto (rozstaw)">
       </label>
+      <label>próg segmentacji cyklu [mm]:
+        <input type="number" id="prog-mm" step="0.001" min="0" value="0.02">
+      </label>
     </div>
     <button class="glowny" id="analizuj" disabled>Analizuj</button>
     <div id="blad"></div>
@@ -77,7 +80,10 @@
         </span>
       </div>
       <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
-        każdy cykl jest liczony z surowych punktów. Ujemne naprężenia z odrywania głowicy są zerowane:
+        każdy cykl jest liczony z surowych punktów, a nie z gotowych wyników raportowanych przez Trapezium.
+        <strong>Loading</strong> oznacza etap ściskania próbki, a <strong>unloading</strong> etap odciążania.
+        Pole pod krzywą można czytać jako energię mechaniczną przypadającą na dany etap cyklu.
+        Ujemne naprężenia z odrywania głowicy są zerowane:
         <span class="formula">σ+ = max(σ, 0)</span>.
         Ta korekcja dotyczy wyłącznie naprężenia, bo ujemne naprężenie podczas odrywania głowicy nie jest
         traktowane jako odpowiedź mechaniczna hydrożelu.
@@ -86,15 +92,19 @@
         Mnożnik 1000 wynika z jednostek:
         <span class="formula">MPa × strain_frac = MJ/m3</span>,
         więc <span class="formula">MJ/m3 × 1000 = kJ/m3</span>.
-        Następnie:
+        Histereza <span class="formula">H</span> to energia rozproszona, czyli ta część energii, której próbka
+        nie oddaje przy odciążaniu. Resilience <span class="formula">R</span> mówi, jaki procent energii wrócił:
         <span class="formula">H = Aloading - Aunloading</span>,
         <span class="formula">R = (Aunloading / Aloading) × 100</span>.
         Dla force-displacement:
-        <span class="formula">Ai,Fd = ((F+i + F+i-1) / 2) × |di - di-1|</span> [mJ],
+        <span class="formula">Ai,Fd = ((Fi + Fi-1) / 2) × |di - di-1|</span> [mJ],
         <span class="formula">HFd = Aloading,Fd - Aunloading,Fd</span>,
-        <span class="formula">elastic recovery = RFd = (Aunloading,Fd / Aloading,Fd) × 100</span>.
+        <span class="formula">elastic energy recovery RFd = (Aunloading,Fd / Aloading,Fd) × 100</span>.
         Tutaj używana jest surowa siła <span class="formula">F</span>, zgodnie z eksportem Trapezium;
-        ujemne wartości siły pozostają w trace.
+        ujemne wartości siły pozostają w trace. Dodatkowo raportowany jest geometryczny odzysk przemieszczenia:
+        <span class="formula">elastic displacement recovery = (dmax - dend) / dmax × 100</span>.
+        To osobna metryka kontrolna; przy badaniu sterowanym przemieszczeniem często wychodzi blisko 100%,
+        więc nie należy jej mylić z odzyskiem energii.
       </div>
       <div style="overflow-x:auto"><table id="tabela"></table></div>
       <div id="stabilizacja"></div>
@@ -123,10 +133,22 @@
         dla retention/softening i nie jest pokazywany na głównych wykresach publikacyjnych. QC sprawdza:
         maksymalny strain, maksymalny stress+, liczby punktów loading/unloading, liczbę punktów z
         <span class="formula">σ &lt; 0</span> wyzerowanych do <span class="formula">σ+ = 0</span> oraz kompletność cyklu.
+        Program dopisuje też ostrzeżenia, gdy cykl nie wraca do okolic zera, nie osiąga 90% strain, ma za mało
+        punktów w którejś fazie albo gdy odzysk energii/przemieszczenia jest poza typowym zakresem.
         Kolumna <span class="formula">source_row</span> w trace CSV wskazuje rzeczywistą linię w pliku CSV,
         więc można wrócić do oryginalnego eksportu.
       </div>
       <div style="overflow-x:auto"><table id="tabela-qc"></table></div>
+    </div>
+    <div class="karta">
+      <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
+        ten wykres służy do kontroli segmentacji. Szara linia pokazuje całe surowe przemieszczenie w czasie,
+        a kolorowe fragmenty pokazują wykryte cykle. Czerwona linia przerywana to próg segmentacji:
+        gdy <span class="formula">displacement &gt; próg</span>, punkt jest traktowany jako część cyklu.
+        Jeżeli kolorowe fragmenty nie pokrywają się z realnymi cyklami ściskania, zmień próg segmentacji i
+        uruchom analizę ponownie.
+      </div>
+      <div id="wykres-segmentacja" class="wykres"></div>
     </div>
     <div class="karta">
       <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
@@ -148,7 +170,7 @@
     <div class="karta">
       <div class="info"><strong>ⓘ Wyjaśnienie:</strong>
         trendy pokazują parametry końcowe per cycle 1..n bez preloadu: hysteresis, resilience,
-        retention, softening, Esec90, HFd, elastic recovery i max force.
+        retention, softening, Esec90, HFd, elastic energy recovery RFd, displacement recovery i max force.
       </div>
       <div id="wykres-trendy" class="wykres"></div>
     </div>
@@ -156,7 +178,6 @@
 </main>
 <footer>
   <div>analizy-ania · transparentna analiza punkt-po-punkcie z trace CSV</div>
-  <div>Testowy tekst do sprawdzenia workflow.</div>
 </footer>
 <script src="app.js"></script>
 </body>

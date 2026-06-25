@@ -161,11 +161,11 @@ def wzbogac_punkty(dane, h0):
     ]
 
 
-def wykryj_cykle(dane):
+def wykryj_cykle(dane, prog_mm=PROG_MM):
     segmenty = []
     start = None
     for i in range(len(dane) + 1):
-        kontakt = i < len(dane) and dane[i]["displacement"] > PROG_MM
+        kontakt = i < len(dane) and dane[i]["displacement"] > prog_mm
         if kontakt and start is None:
             start = max(0, i - 1)
         elif not kontakt and start is not None:
@@ -230,7 +230,7 @@ def interpoluj_poziom(punkty_loading, target_strain_frac):
     }
 
 
-def policz_cykl(seg, raw_index=0, has_preload=False):
+def policz_cykl(seg, raw_index=0, has_preload=False, prog_mm=PROG_MM):
     etykieta = etykieta_cyklu(raw_index, has_preload)
     max_disp = max(p["displacement"] for p in seg)
     i_max = next(i for i, p in enumerate(seg) if p["displacement"] == max_disp)
@@ -312,6 +312,7 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
     resilience_pct = 100 * a_unloading_kjm3 / a_loading_kjm3 if a_loading_kjm3 > 0 else None
     fd_hysteresis_mj = a_loading_fd_mj - a_unloading_fd_mj
     force_resilience_pct = 100 * a_unloading_fd_mj / a_loading_fd_mj if a_loading_fd_mj > 0 else None
+    elastic_energy_recovery_pct = force_resilience_pct
     interpolations = {
         str(round(poziom * 100)): interpoluj_poziom(loading_points, poziom)
         for poziom in POZIOMY_ODKSZTALCENIA
@@ -320,11 +321,20 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
     e_sec90 = sigma90 / 0.90 if sigma90 is not None else None
     first = punkty[0]
     last = punkty[-1]
+    start_displacement_mm = first["displacement"]
+    max_displacement_mm = max_disp
+    end_displacement_mm = last["displacement"]
+    residual_displacement_mm = end_displacement_mm
+    elastic_displacement_recovery_pct = (
+        100 * (max_displacement_mm - residual_displacement_mm) / max_displacement_mm
+        if max_displacement_mm > 0
+        else None
+    )
     qc_complete = (
         len(loading_points) > 1
         and len(punkty) - len(loading_points) > 1
-        and first["displacement"] <= PROG_MM
-        and last["displacement"] <= PROG_MM
+        and abs(first["displacement"]) <= prog_mm
+        and abs(last["displacement"]) <= prog_mm
     )
     source_files = list(dict.fromkeys(p["sourceFile"] for p in punkty))
 
@@ -347,6 +357,12 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
         "sigmaMax": max(p["stressPlus"] for p in punkty),
         "stressRawMin": min(p["stressRaw"] for p in punkty),
         "fMax": max(p["force"] for p in punkty),
+        "startDisplacementMm": start_displacement_mm,
+        "maxDisplacementMm": max_displacement_mm,
+        "maxDisplacementGlobalIndex": punkty[i_max]["globalIndex"],
+        "endDisplacementMm": end_displacement_mm,
+        "residualDisplacementMm": residual_displacement_mm,
+        "elasticDisplacementRecoveryPct": elastic_displacement_recovery_pct,
         "aLoadingKJm3": a_loading_kjm3,
         "aUnloadingKJm3": a_unloading_kjm3,
         "hysteresisKJm3": hysteresis_kjm3,
@@ -355,7 +371,8 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
         "aUnloadingFdMj": a_unloading_fd_mj,
         "fdHysteresisMj": fd_hysteresis_mj,
         "forceResiliencePct": force_resilience_pct,
-        "elasticRecoveryValuePct": force_resilience_pct,
+        "elasticEnergyRecoveryPct": elastic_energy_recovery_pct,
+        "elasticRecoveryValuePct": elastic_energy_recovery_pct,
         "interpolations": interpolations,
         "sigma10": interpolations["10"]["stress"],
         "sigma30": interpolations["30"]["stress"],
@@ -365,6 +382,7 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
         "eSec90": e_sec90,
         "stressRetentionPct": None,
         "stressSofteningPct": None,
+        "qcWarnings": [],
     }
 
     for row in wynik["traceRows"]:
@@ -375,12 +393,54 @@ def policz_cykl(seg, raw_index=0, has_preload=False):
         row["finalLoadingFdMj"] = a_loading_fd_mj
         row["finalUnloadingFdMj"] = a_unloading_fd_mj
         row["finalFdHysteresisMj"] = fd_hysteresis_mj
-        row["finalElasticRecoveryPct"] = force_resilience_pct
+        row["finalElasticEnergyRecoveryPct"] = elastic_energy_recovery_pct
+        row["finalElasticDisplacementRecoveryPct"] = elastic_displacement_recovery_pct
+        row["finalElasticRecoveryPct"] = elastic_energy_recovery_pct
+        row["finalResidualDisplacementMm"] = residual_displacement_mm
 
+    wynik["qcWarnings"] = zbuduj_qc_warnings(wynik, prog_mm)
     return wynik
 
 
-def analizuj(listy_wierszy, h0_wejsciowe, nazwy):
+def zbuduj_qc_warnings(w, prog_mm=PROG_MM):
+    ostrzezenia = []
+    n = len(w.get("points", []))
+    neg_pct = 100 * w["negativeStressZeroedCount"] / n if n else 0
+    if not w["complete"]:
+        ostrzezenia.append(
+            f"cykl nie wraca do okolic zera albo nie ma pelnej fazy loading/unloading (prog {prog_mm} mm)"
+        )
+    if w["loadingPointCount"] < 10:
+        ostrzezenia.append("bardzo malo punktow w fazie loading")
+    if w["unloadingPointCount"] < 10:
+        ostrzezenia.append("bardzo malo punktow w fazie unloading")
+    if w["maxStrainFrac"] < 0.90:
+        ostrzezenia.append(
+            "cykl nie osiaga strainFrac = 0.90, wiec sigma90 i Esec90 beda puste albo niewiarygodne"
+        )
+    if neg_pct > 10:
+        ostrzezenia.append(f"{neg_pct:.1f}% punktow mialo ujemne stressRaw wyzerowane do stressPlus")
+    if not w["aLoadingKJm3"] > 0:
+        ostrzezenia.append("Aloading stress-strain nie jest dodatnie")
+    if w["resiliencePct"] is not None and w["resiliencePct"] > 100:
+        ostrzezenia.append("resilience stress-strain przekracza 100%")
+    if w["forceResiliencePct"] is not None and w["forceResiliencePct"] < 0:
+        ostrzezenia.append("RFd/elastic energy recovery jest ujemne, zwykle przez ujemna sile podczas unloading")
+    if w["forceResiliencePct"] is not None and w["forceResiliencePct"] > 100:
+        ostrzezenia.append("RFd/elastic energy recovery przekracza 100%")
+    if (
+        w["elasticDisplacementRecoveryPct"] is not None
+        and (w["elasticDisplacementRecoveryPct"] < 0 or w["elasticDisplacementRecoveryPct"] > 105)
+    ):
+        ostrzezenia.append("elastic displacement recovery jest poza typowym zakresem 0-105%")
+    if abs(w["startDisplacementMm"]) > prog_mm:
+        ostrzezenia.append("poczatek cyklu nie jest blisko displacement = 0 mm")
+    if abs(w["endDisplacementMm"]) > prog_mm:
+        ostrzezenia.append("koniec cyklu nie jest blisko displacement = 0 mm")
+    return ostrzezenia
+
+
+def analizuj(listy_wierszy, h0_wejsciowe, nazwy, opcje=None):
     walidacja = waliduj(listy_wierszy, nazwy)
     if walidacja["bledy"]:
         raise ValueError("\n".join(walidacja["bledy"]))
@@ -389,14 +449,18 @@ def analizuj(listy_wierszy, h0_wejsciowe, nazwy):
     h0 = dane[0]["spacing"] if h0_wejsciowe is None else h0_wejsciowe
     if not h0 > 0:
         raise ValueError(f"Nieprawidlowe h0 (rozstaw w danych: {dane[0]['spacing']} mm).")
+    opcje = opcje or {}
+    prog_mm = opcje.get("progMm", PROG_MM)
+    if not isinstance(prog_mm, (int, float)) or prog_mm < 0:
+        prog_mm = PROG_MM
 
     punkty = wzbogac_punkty(dane, h0)
-    segmenty = wykryj_cykle(punkty)
+    segmenty = wykryj_cykle(punkty, prog_mm)
     if not segmenty:
-        raise ValueError(f"Nie wykryto zadnych cykli sciskania (przemieszczenie nigdy nie przekracza {PROG_MM} mm).")
+        raise ValueError(f"Nie wykryto zadnych cykli sciskania (przemieszczenie nigdy nie przekracza {prog_mm} mm).")
 
     has_preload = len(segmenty) >= 2
-    wyniki = [policz_cykl(seg, i, has_preload) for i, seg in enumerate(segmenty)]
+    wyniki = [policz_cykl(seg, i, has_preload, prog_mm) for i, seg in enumerate(segmenty)]
     cycle1 = next((w for w in wyniki if not w["isPreload"]), None)
     sigma_ref = cycle1["sigmaMax"] if cycle1 else None
 
@@ -408,6 +472,8 @@ def analizuj(listy_wierszy, h0_wejsciowe, nazwy):
                 w["stressSofteningPct"] = 0
             if abs(w["stressRetentionPct"] - 100) < 1e-10:
                 w["stressRetentionPct"] = 100
+            if w["cycleNumber"] > 1 and w["stressRetentionPct"] > 100.5:
+                w["qcWarnings"].append("stress retention przekracza 100% wzgledem cycle 1")
         for row in w["traceRows"]:
             row["finalStressRetentionPct"] = w["stressRetentionPct"]
             row["finalStressSofteningPct"] = w["stressSofteningPct"]
@@ -416,6 +482,7 @@ def analizuj(listy_wierszy, h0_wejsciowe, nazwy):
 
     return {
         "h0": h0,
+        "progMm": prog_mm,
         "liczbaPunktow": len(punkty),
         "punkty": punkty,
         "cykle": [w["points"] for w in wyniki],
@@ -467,6 +534,7 @@ def zrob_summary_csv(rezultat):
         "is_preload",
         "h0_mm",
         "total_points",
+        "cycle_detection_threshold_mm",
         "source_files",
         "t_start_s",
         "t_end_s",
@@ -474,6 +542,13 @@ def zrob_summary_csv(rezultat):
         "loading_points",
         "unloading_points",
         "negative_stress_zeroed_points",
+        "qc_warnings",
+        "start_displacement_mm",
+        "max_displacement_mm",
+        "max_displacement_global_index",
+        "end_displacement_mm",
+        "residual_displacement_mm",
+        "elastic_displacement_recovery_pct",
         "max_strain_frac",
         "max_strain_pct",
         "max_stress_plus_mpa",
@@ -486,6 +561,7 @@ def zrob_summary_csv(rezultat):
         "Aunloading_Fd_mJ",
         "hysteresis_Fd_mJ",
         "force_resilience_pct",
+        "elastic_energy_recovery_pct",
         "elastic_recovery_value_pct",
         "stress_retention_pct",
         "stress_softening_pct",
@@ -511,6 +587,7 @@ def zrob_summary_csv(rezultat):
             "is_preload": w["isPreload"],
             "h0_mm": rezultat["h0"],
             "total_points": rezultat["liczbaPunktow"],
+            "cycle_detection_threshold_mm": rezultat.get("progMm", PROG_MM),
             "source_files": ", ".join(w["sourceFiles"]),
             "t_start_s": w["tStart"],
             "t_end_s": w["tKoniec"],
@@ -518,6 +595,13 @@ def zrob_summary_csv(rezultat):
             "loading_points": w["loadingPointCount"],
             "unloading_points": w["unloadingPointCount"],
             "negative_stress_zeroed_points": w["negativeStressZeroedCount"],
+            "qc_warnings": " | ".join(w["qcWarnings"]),
+            "start_displacement_mm": w["startDisplacementMm"],
+            "max_displacement_mm": w["maxDisplacementMm"],
+            "max_displacement_global_index": w["maxDisplacementGlobalIndex"],
+            "end_displacement_mm": w["endDisplacementMm"],
+            "residual_displacement_mm": w["residualDisplacementMm"],
+            "elastic_displacement_recovery_pct": w["elasticDisplacementRecoveryPct"],
             "max_strain_frac": w["maxStrainFrac"],
             "max_strain_pct": w["maxStrainPct"],
             "max_stress_plus_mpa": w["sigmaMax"],
@@ -530,6 +614,7 @@ def zrob_summary_csv(rezultat):
             "Aunloading_Fd_mJ": w["aUnloadingFdMj"],
             "hysteresis_Fd_mJ": w["fdHysteresisMj"],
             "force_resilience_pct": w["forceResiliencePct"],
+            "elastic_energy_recovery_pct": w["elasticEnergyRecoveryPct"],
             "elastic_recovery_value_pct": w["elasticRecoveryValuePct"],
             "stress_retention_pct": w["stressRetentionPct"],
             "stress_softening_pct": w["stressSofteningPct"],
@@ -593,7 +678,10 @@ def zrob_trace_csv(rezultat):
         "final_loading_Fd_mJ",
         "final_unloading_Fd_mJ",
         "final_Fd_hysteresis_mJ",
+        "final_elastic_energy_recovery_pct",
+        "final_elastic_displacement_recovery_pct",
         "final_elastic_recovery_pct",
+        "final_residual_displacement_mm",
         "final_stress_retention_pct",
         "final_stress_softening_pct",
         "final_Esec90_MPa",
@@ -640,7 +728,10 @@ def zrob_trace_csv(rezultat):
                 "final_loading_Fd_mJ": r["finalLoadingFdMj"],
                 "final_unloading_Fd_mJ": r["finalUnloadingFdMj"],
                 "final_Fd_hysteresis_mJ": r["finalFdHysteresisMj"],
+                "final_elastic_energy_recovery_pct": r["finalElasticEnergyRecoveryPct"],
+                "final_elastic_displacement_recovery_pct": r["finalElasticDisplacementRecoveryPct"],
                 "final_elastic_recovery_pct": r["finalElasticRecoveryPct"],
+                "final_residual_displacement_mm": r["finalResidualDisplacementMm"],
                 "final_stress_retention_pct": r["finalStressRetentionPct"],
                 "final_stress_softening_pct": r["finalStressSofteningPct"],
                 "final_Esec90_MPa": r["finalESec90"],
@@ -673,7 +764,8 @@ def tabela_energia(wyniki):
                 "Aloading F-d [mJ]": fmt(w["aLoadingFdMj"], 2),
                 "Aunloading F-d [mJ]": fmt(w["aUnloadingFdMj"], 2),
                 "HFd [mJ]": fmt(w["fdHysteresisMj"], 2),
-                "elastic recovery [%]": fmt(w["elasticRecoveryValuePct"], 1),
+                "elastic energy recovery RFd [%]": fmt(w["elasticEnergyRecoveryPct"], 1),
+                "displacement recovery [%]": fmt(w["elasticDisplacementRecoveryPct"], 1),
                 "max force [N]": fmt(w["fMax"], 2),
             }
             for w in wyniki
@@ -706,10 +798,14 @@ def tabela_qc(wyniki):
             {
                 "cykl": w["cycleLabel"],
                 "complete": "tak" if w["complete"] else "nie",
+                "start d [mm]": fmt(w["startDisplacementMm"], 4),
+                "max d [mm]": fmt(w["maxDisplacementMm"], 4),
+                "end d [mm]": fmt(w["endDisplacementMm"], 4),
                 "loading pts": w["loadingPointCount"],
                 "unloading pts": w["unloadingPointCount"],
                 "zeroed negative stress": w["negativeStressZeroedCount"],
                 "raw stress min [MPa]": fmt(w["stressRawMin"]),
+                "QC warnings": " | ".join(w["qcWarnings"]) or "OK",
                 "source files": ", ".join(w["sourceFiles"]),
             }
             for w in wyniki
@@ -749,6 +845,45 @@ def wykres_linie(wyniki, x_col, y_col, tytul, x_title, y_title):
     st.altair_chart(chart, use_container_width=True)
 
 
+def wykres_segmentacji(rezultat):
+    raw_rows = [
+        {"time": p["time"], "displacement": p["displacement"]}
+        for p in decymuj(rezultat["punkty"], 5000)
+    ]
+    cycle_rows = []
+    for w in rezultat["wyniki"]:
+        label = "preload/QC" if w["isPreload"] else w["cycleLabel"]
+        for p in decymuj(w["points"], 1200):
+            cycle_rows.append({"time": p["time"], "displacement": p["displacement"], "cykl": label})
+    if not raw_rows:
+        return
+
+    raw = (
+        alt.Chart(pd.DataFrame(raw_rows))
+        .mark_line(color="#cbd5e1", opacity=0.9)
+        .encode(
+            x=alt.X("time:Q", title="Time [s]"),
+            y=alt.Y("displacement:Q", title="Displacement [mm]"),
+        )
+    )
+    cycles = (
+        alt.Chart(pd.DataFrame(cycle_rows))
+        .mark_line()
+        .encode(
+            x="time:Q",
+            y="displacement:Q",
+            color=alt.Color("cykl:N", title="cykl"),
+        )
+    )
+    threshold = (
+        alt.Chart(pd.DataFrame([{"prog": rezultat["progMm"]}]))
+        .mark_rule(color="#ef4444", strokeDash=[4, 4])
+        .encode(y="prog:Q")
+    )
+    chart = (raw + cycles + threshold).properties(title="Cycle segmentation preview", height=360).interactive()
+    st.altair_chart(chart, use_container_width=True)
+
+
 def wykres_trendy(wyniki):
     metrics = [
         ("Hysteresis [kJ/m3]", "hysteresisKJm3"),
@@ -757,7 +892,8 @@ def wykres_trendy(wyniki):
         ("Stress softening [%]", "stressSofteningPct"),
         ("Esec90 [MPa]", "eSec90"),
         ("F-d hysteresis [mJ]", "fdHysteresisMj"),
-        ("Elastic recovery [%]", "elasticRecoveryValuePct"),
+        ("Elastic energy recovery RFd [%]", "elasticEnergyRecoveryPct"),
+        ("Displacement recovery [%]", "elasticDisplacementRecoveryPct"),
         ("Max force [N]", "fMax"),
     ]
     rows = []
@@ -792,9 +928,11 @@ st.caption(
 
 with st.expander("Metodologia i wzory", expanded=True):
     st.write(
-        "Każdy cykl jest liczony z surowych punktów. Ujemne naprężenia z odrywania głowicy są zerowane "
-        "tylko w analizie stress-strain, bo nie są traktowane jako odpowiedź mechaniczna hydrożelu. "
-        "Analiza force-displacement używa surowej siły z CSV."
+        "Każdy cykl jest liczony z surowych punktów, a nie z gotowych wyników raportowanych przez Trapezium. "
+        "Loading oznacza etap ściskania próbki, a unloading etap odciążania. Pole pod krzywą można czytać "
+        "jako energię mechaniczną przypadającą na dany etap cyklu. Ujemne naprężenia z odrywania głowicy "
+        "są zerowane tylko w analizie stress-strain, bo nie są traktowane jako odpowiedź mechaniczna "
+        "hydrożelu. Analiza force-displacement używa surowej siły z CSV."
     )
     st.code(
         """stressPlus = max(stressRaw, 0)
@@ -807,12 +945,16 @@ Retention_n = (sigmaMax_n / sigmaMax_cycle1) * 100
 Softening_n = 100 - Retention_n
 Ai,Fd = ((force_i + force_i-1) / 2) * |displacement_i - displacement_i-1|
 HFd = Aloading,Fd - Aunloading,Fd
-elastic recovery = RFd = (Aunloading,Fd / Aloading,Fd) * 100""",
+elastic energy recovery RFd = (Aunloading,Fd / Aloading,Fd) * 100
+elastic displacement recovery = (dmax - dend) / dmax * 100""",
         language="text",
     )
     st.write(
         "Mnożnik 1000 wynika z jednostek: MPa × strain_frac = MJ/m3, więc MJ/m3 × 1000 = kJ/m3. "
-        "Odkształcenie do obliczeń jest ułamkiem, a strain_% służy tylko do prezentacji."
+        "Odkształcenie do obliczeń jest ułamkiem, a strain_% służy tylko do prezentacji. "
+        "Histereza H to energia rozproszona, czyli ta część energii, której próbka nie oddaje przy "
+        "odciążaniu. Resilience i RFd mówią, jaki procent energii wrócił. Displacement recovery jest "
+        "osobną kontrolą geometryczną i nie należy jej mylić z odzyskiem energii."
     )
     st.write(
         "Preload: jeżeli pomiar ma co najmniej dwa cykle, pierwszy wykryty cykl zostaje w danych i QC, "
@@ -826,6 +968,17 @@ pliki = st.file_uploader(
     accept_multiple_files=True,
 )
 h0_text = st.text_input("h0 - wysokość próbki [mm]; zostaw puste, aby użyć pierwszego rozstawu z danych", "")
+prog_mm = st.number_input(
+    "Próg segmentacji cyklu [mm]",
+    min_value=0.0,
+    value=PROG_MM,
+    step=0.001,
+    format="%.4f",
+    help=(
+        "Punkt jest traktowany jako część cyklu, gdy displacement przekracza ten próg. "
+        "Jeżeli podgląd segmentacji źle łapie cykle, zmień próg i przelicz analizę."
+    ),
+)
 
 if pliki:
     try:
@@ -835,7 +988,7 @@ if pliki:
 
         nazwy = [plik.name for plik in pliki]
         listy = [parsuj_csv(dekoduj_plik(plik)) for plik in pliki]
-        rezultat = analizuj(listy, h0_value, nazwy)
+        rezultat = analizuj(listy, h0_value, nazwy, {"progMm": prog_mm})
     except Exception as exc:
         st.error(f"Błąd: {exc}")
     else:
@@ -850,7 +1003,7 @@ if pliki:
 
         st.write(
             f"Punktów pomiarowych: {rezultat['liczbaPunktow']:,} · h0 = {rezultat['h0']:.4f} mm · "
-            f"wykryto cykli: {len(rezultat['cykle'])}"
+            f"próg segmentacji = {rezultat['progMm']:.4f} mm · wykryto cykli: {len(rezultat['cykle'])}"
             + (" · pierwszy cykl traktowany jako preload/QC" if rezultat["hasPreload"] else "")
         )
 
@@ -864,14 +1017,17 @@ if pliki:
 
         st.subheader("Energia i odzysk mechaniczny")
         st.info(
-            "Każdy cykl jest liczony z surowych punktów. Ujemne naprężenia z odrywania głowicy są zerowane: "
+            "Każdy cykl jest liczony z surowych punktów. Loading to ściskanie, unloading to odciążanie. "
+            "Pole pod krzywą opisuje energię/pracę w danej fazie cyklu. Ujemne naprężenia z odrywania "
+            "głowicy są zerowane: "
             "stressPlus = max(stressRaw, 0). Ta korekcja dotyczy wyłącznie naprężenia. Pole stress-strain "
             "dla interwału: Ai = ((stressPlus_i + stressPlus_i-1) / 2) * |strainFrac_i - strainFrac_i-1| * 1000 "
             "[kJ/m3]. Następnie: H = Aloading - Aunloading oraz R = (Aunloading / Aloading) * 100. "
             "Dla force-displacement: Ai,Fd = ((F_i + F_i-1) / 2) * |d_i - d_i-1| [mJ], "
-            "HFd = Aloading,Fd - Aunloading,Fd, elastic recovery = RFd = "
+            "HFd = Aloading,Fd - Aunloading,Fd, elastic energy recovery RFd = "
             "(Aunloading,Fd / Aloading,Fd) * 100. Używana jest surowa siła F z eksportu Trapezium; "
-            "ujemne wartości siły pozostają w trace."
+            "ujemne wartości siły pozostają w trace. Displacement recovery = (dmax - dend) / dmax * 100 "
+            "jest osobną kontrolą powrotu przemieszczenia do zera."
         )
         st.dataframe(tabela_energia(rezultat["wyniki"]), use_container_width=True, hide_index=True)
 
@@ -892,6 +1048,8 @@ if pliki:
             "odniesienia dla retention/softening i nie jest pokazywany na głównych wykresach publikacyjnych. "
             "QC sprawdza maksymalny strain, maksymalny stressPlus, liczby punktów loading/unloading, liczbę "
             "punktów z naprężeniem stressRaw < 0 wyzerowanych do stressPlus = 0 oraz kompletność cyklu. "
+            "Program dopisuje ostrzeżenia, gdy cykl nie wraca do okolic zera, nie osiąga 90% strain, ma za "
+            "mało punktów w którejś fazie albo gdy odzysk energii/przemieszczenia jest poza typowym zakresem. "
             "Kolumna source_row w trace CSV wskazuje rzeczywistą linię w pliku CSV, więc można wrócić do "
             "oryginalnego eksportu."
         )
@@ -899,6 +1057,14 @@ if pliki:
 
         publikacyjne = [w for w in rezultat["wyniki"] if not w["isPreload"]][:LICZBA_CYKLI_PUBLIKACYJNYCH]
         wlasciwe = [w for w in rezultat["wyniki"] if not w["isPreload"]]
+
+        st.subheader("Podgląd segmentacji cykli")
+        st.info(
+            "Szara linia pokazuje całe surowe przemieszczenie w czasie, kolorowe fragmenty to wykryte cykle, "
+            "a czerwona linia przerywana to próg segmentacji. Jeżeli kolorowe fragmenty nie pokrywają się z "
+            "realnymi cyklami ściskania, zmień próg segmentacji i uruchom analizę ponownie."
+        )
+        wykres_segmentacji(rezultat)
 
         st.subheader("Stress-strain loops")
         st.info(
@@ -932,7 +1098,7 @@ if pliki:
         st.subheader("Trendy parametrów")
         st.info(
             "Trendy pokazują parametry końcowe per cycle 1..n bez preloadu: hysteresis, resilience, retention, "
-            "softening, Esec90, HFd, elastic recovery i max force."
+            "softening, Esec90, HFd, elastic energy recovery RFd, displacement recovery i max force."
         )
         wykres_trendy(wlasciwe)
 else:

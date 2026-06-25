@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Local portal for cyclic compression analysis."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "altair>=6.2.2",
+    "pandas>=3.0.3",
+    "streamlit>=1.58.0",
+]
 
 [tool.uv]
 package = false
