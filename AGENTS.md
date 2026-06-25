@@ -17,11 +17,35 @@ Portal jest statyczny i serwowany przez `uv run python scripts/serve_portal.py`.
 - Nie nadpisuj ani nie cofaj zmian, ktorych sam nie zrobiles.
 - Pracuj na osobnym branchu `codex/<krotki-opis-zadania>`, chyba ze runner Codexa juz utworzyl branch dla zadania.
 - Zmiany trzymaj male i zrozumiale. Dla osob nietechnicznych wazniejszy jest czytelny portal i jasny opis niz sprytna abstrakcja.
+- Kazda zmiana w kodzie musi miec adekwatny test automatyczny albo jasne uzasadnienie, dlaczego test nie ma sensu. Brak czasu nie jest uzasadnieniem.
+- Jesli zmieniasz zachowanie aplikacji, dodaj albo zaktualizuj test regresyjny pokazujacy oczekiwany wynik na surowych punktach.
+- Jesli dodajesz nowy sposob uruchamiania, nowa biblioteke albo nowy frontend, zaktualizuj zaleznosci, lockfile, README i CI tak, zeby problem byl wykrywany przed mergem.
 - Jesli zmieniasz metodologie obliczen, zaktualizuj jednoczesnie:
   - widoczne wyjasnienia i wzory w portalu,
   - eksporty `summary CSV` i `trace CSV`, jesli zmienia sie ich znaczenie,
   - testy JS i E2E,
   - README, jesli zmienia sie sposob uruchamiania albo interpretacji wynikow.
+
+## Architektura i jakosc kodu
+
+- Traktuj logike obliczen jako warstwe domenowa, a UI jako cienka warstwe prezentacji. UI moze formatowac i wyjasniac, ale nie powinien ukrywac metodologii ani liczyc inaczej niz warstwa domenowa.
+- Nie duplikuj metodologii w kilku miejscach bez testu porownawczego. Jesli ta sama analiza istnieje np. w JS i Pythonie, dodaj test sprawdzajacy zgodnosc wynikow na tych samych plikach CSV albo jasno opisz ryzyko rozjazdu.
+- Preferuj male, nazwane funkcje dla etapow: parsowanie, walidacja, scalanie plikow, detekcja cykli, obliczenia per cykl, eksport CSV i renderowanie UI.
+- Funkcje obliczeniowe powinny byc deterministyczne: wejscie w surowych punktach, wyjscie w strukturach danych. Nie powinny zalezec od DOM, Streamlit, plikow globalnych ani stanu sesji.
+- Eksporty `summary CSV` i `trace CSV` sa czescia API projektu. Zmiana nazwy kolumny, znaczenia kolumny albo jednostki wymaga testu i widocznego opisu dla uzytkownika.
+- Dla duzych danych unikaj niepotrzebnych kopii w pamieci. Szczegolnie ostroznie traktuj pelny `trace CSV`, bo moze miec setki tysiecy wierszy.
+- Jesli wprowadzasz decymacje albo uproszczenie danych na wykresie, nie moze to zmieniac obliczen. Zachowuj punkty krytyczne na wykresach: pierwszy, ostatni, maksimum przemieszczenia, maksimum naprezenia/sily i przejscie loading/unloading.
+- Nowe zaleznosci dodawaj jawnie do `pyproject.toml` i `uv.lock`. Nie polegaj na zaleznosciach przechodnich, jesli kod importuje biblioteke bezposrednio.
+- Przed wiekszym refaktorem napisz krotki plan: jakie pliki beda dotkniete, jaka jest granica odpowiedzialnosci modulow i jakie testy potwierdza brak regresji.
+
+## Minimalny standard testow
+
+- Zmiana metodologii lub parsera CSV: test JS/Python na danych przykladowych oraz sprawdzenie eksportow `summary CSV` i `trace CSV`.
+- Zmiana UI bez zmiany obliczen: test E2E albo test smoke, ktory potwierdza, ze uzytkownik moze wgrac pliki, uruchomic analize i pobrac eksporty.
+- Nowa komenda `make`: test albo check CI, ktory potwierdza, ze komenda startuje lub przynajmniej importuje wymagany kod i zaleznosci.
+- Refaktor bez zmiany zachowania: test regresyjny porownujacy kluczowe metryki przed i po refaktorze.
+- Zmiana tylko dokumentacyjna: testy nie sa wymagane, ale w podsumowaniu napisz wprost, ze zmiana dotyczy tylko dokumentacji.
+- Jesli testu nie dodano, finalna odpowiedz musi zawierac sekcje `Ryzyko braku testu` z prostym wyjasnieniem konsekwencji.
 
 ## Zasady metodologii
 
